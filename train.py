@@ -9,12 +9,23 @@ from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
 
+from schema import TARGET_COLUMN, REQUIRED_COLUMNS, ALLOWED_TARGET_VALUES
+
 
 def load_data(path):
     return pd.read_csv(path)
 
+def validate_data(df):
+    missing_cols = REQUIRED_COLUMNS - set(df.columns)
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+    
+    if not set(df[TARGET_COLUMN].unique()).issubset(ALLOWED_TARGET_VALUES):
+        raise ValueError(f"Invalid target values found : {df[TARGET_COLUMN].unique()}")
+
 def main():
     df = load_data("data/Telco_customer_churn_raw.csv")
+    validate_data(df)
     
     TARGET = "Churn Value"
     DROP_COLS = [
