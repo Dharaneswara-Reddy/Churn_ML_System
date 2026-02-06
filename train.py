@@ -58,6 +58,11 @@ def main():
     log_target_distribution(y)
     X = df.drop(columns=[TARGET] + [c for c in DROP_COLS if c in df.columns])
     
+    neg, pos = np.bincount(y)
+    ratio = neg / pos
+    print(f"Negative/Positive ratio: {ratio:.2f}")
+
+    
     categorical_cols = X.select_dtypes(include = ["object"]).columns
     numerical_cols = X.select_dtypes(exclude = ["object"]).columns
     
@@ -71,7 +76,7 @@ def main():
     pipeline = Pipeline(
         steps = [
             ("preprocessor", preprocessor),
-            ("model", LogisticRegression(max_iter=1000))
+            ("model", LogisticRegression(max_iter=1000,class_weight="balanced"))
         ]
     )
     
