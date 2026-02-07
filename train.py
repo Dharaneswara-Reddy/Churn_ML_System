@@ -80,8 +80,23 @@ def main():
         ]
     )
     
-    X_train,X_test,y_train,y_test = train_test_split(X,y,test_size=0.2, random_state=42)
+    df_sorted = df.sort_values("Tenure Months")
     
+    split_index = int(0.8 * len(df_sorted))
+    
+    train_df = df_sorted.iloc[:split_index]
+    test_df = df_sorted.iloc[split_index:]
+    
+    X_train = train_df.drop(columns=[TARGET_COLUMN])
+    y_train = train_df[TARGET_COLUMN]
+    
+    X_test = test_df.drop(columns=[TARGET_COLUMN])
+    y_test = test_df[TARGET_COLUMN]
+    
+    print(f"Train tenure range: {X_train['Tenure Months'].min()} - {X_train['Tenure Months'].max()}")
+    print(f"Test tenure range: {X_test['Tenure Months'].min()} - {X_test['Tenure Months'].max()}")
+
+        
     pipeline.fit(X_train,y_train)
     
     probs = pipeline.predict_proba(X_test)[:,1]
