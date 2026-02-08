@@ -39,10 +39,19 @@ def log_target_distribution(y):
     dist = dict(zip(values,counts))
     print("Target distribtuion:", dist)
     
+def summarize_feature(name, train_series, test_series):
+    print(f"\nFeature: {name}")
+    print(f"Train -> Mean : {train_series.mean():.2f}, std : {train_series.std():.2f}")
+    print(f"Test -> Mean : {test_series.mean():.2f}, std : {test_series.std():.2f}")
+    
+    
 
 def main():
     df = load_data("data/Telco_customer_churn_raw.csv")
     validate_data(df)
+    
+    df["Total Charges"] = pd.to_numeric(df["Total Charges"],errors='coerce')
+    df["Total Charges"] = df["Total Charges"].fillna(0)
     
     TARGET = "Churn Value"
     DROP_COLS = [
@@ -92,6 +101,25 @@ def main():
     
     X_test = test_df.drop(columns=[TARGET_COLUMN])
     y_test = test_df[TARGET_COLUMN]
+    
+    summarize_feature(
+        "Tenure Months",
+        X_train["Tenure Months"],
+        X_test["Tenure Months"]
+    )
+
+    summarize_feature(
+        "Monthly Charges",
+        X_train["Monthly Charges"],
+        X_test["Monthly Charges"]
+    )
+
+    summarize_feature(
+        "Total Charges",
+        X_train["Total Charges"],
+        X_test["Total Charges"]
+    )
+
     
     print(f"Train tenure range: {X_train['Tenure Months'].min()} - {X_train['Tenure Months'].max()}")
     print(f"Test tenure range: {X_test['Tenure Months'].min()} - {X_test['Tenure Months'].max()}")
