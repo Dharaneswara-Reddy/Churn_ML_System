@@ -2,6 +2,8 @@ import os
 import pandas as pd
 import numpy as np
 import pickle
+from datetime import datetime
+import json
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -22,6 +24,7 @@ from sklearn.metrics import (
 
 from schema import TARGET_COLUMN, REQUIRED_COLUMNS, ALLOWED_TARGET_VALUES
 
+MODEL_VERSION = "v1"
 
 def load_data(path):
     return pd.read_csv(path)
@@ -146,9 +149,24 @@ def main():
         )
 
     
-    os.makedirs("models",exist_ok=True)
-    with open("models/model.pkl", "wb") as f:
+    model_dir = f"models/experiments/churn_model_{MODEL_VERSION}"
+    os.makedirs(model_dir, exist_ok=True)
+    
+    with open(f"{model_dir}/model.pkl", "wb") as f:
         pickle.dump(pipeline, f)
+        
+        
+    metadata = {
+    "model_version": MODEL_VERSION,
+    "training_date": datetime.now().strftime("%Y-%m-%d"),
+    "split_strategy": "time-aware (tenure-based)",
+    "class_weight": "balanced",
+    "features_used": list(X_train.columns),
+    "notes": "Day 7 model with drift-aware split and cost-sensitive learning"
+    }
+    
+    with open(f"{model_dir}/metadata.json", "w") as f:
+        json.dump(metadata, f, indent = 2)
         
 if __name__ == "__main__":
     main()
