@@ -5,14 +5,23 @@ import pandas as pd
 
 
 from churn_system.schema import validate_inference_data
+from churn_system.config import load_config
+from pathlib import Path
+
+
+config = load_config()
 
 app = FastAPI(title="Churn Prediction API")
 
 # Load the model Once at startup
 
-with open("models/experiments/churn_model_v1/model.pkl","rb") as f:
+model_path = Path(config["model"]["base_path"]) / config["model"]["version"] / "model.pkl"
+
+with open(model_path,"rb") as f:
     model = pickle.load(f)
-    
+
+THRESHOLD = config["inference"]["threshold"]    
+
 @app.get("/")
 def health_check():
     return {"status" : "ok", "message" : "Churn model is running"}
@@ -33,10 +42,13 @@ def predict(payload : dict):
     
     try:
         prob = model.predict_proba(df_valid)[:,1][0]
+        prediction = int(prob >= THRESHOLD)
     except Exception as e:
         raise HTTPException(status_code=500, detail = "Prediction failed")
     
     
-    return{
-        "churn_probability" : round(float(prob), 4)
-    }
+    return {
+            "churn_probability" : round(float(prob), 4),
+            "prediction" : prediction,
+            "threshold" : THRESHOLD
+        }

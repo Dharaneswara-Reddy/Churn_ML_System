@@ -1,0 +1,10 @@
+model:
+  version: "churn_model_v1"
+  base_path : "models/experiments"
+
+inference:
+  threshold : 0.5
+
+data :
+  raw_path : "data/Telco_customer_churn_raw.csv"
+
