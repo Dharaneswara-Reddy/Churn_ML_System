@@ -1,7 +1,7 @@
 import pickle
 import pandas as pd
 
-from schema import validate_inference_data
+from churn_system.schema import validate_inference_data
 
 # Load trained pipeline
 with open(

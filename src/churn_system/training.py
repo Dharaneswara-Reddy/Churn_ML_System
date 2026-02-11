@@ -22,7 +22,7 @@ from sklearn.metrics import (
 
 
 
-from schema import TARGET_COLUMN, REQUIRED_COLUMNS, ALLOWED_TARGET_VALUES
+from churn_system.schema import TARGET_COLUMN, REQUIRED_COLUMNS, ALLOWED_TARGET_VALUES
 
 MODEL_VERSION = "v1"
 
