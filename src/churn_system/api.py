@@ -9,6 +9,7 @@ import pandas as pd
 from churn_system.schema import validate_inference_data
 from churn_system.config import load_config
 from churn_system.logger import get_logger
+from churn_system.prediction_store import store_prediction
 from pathlib import Path
 
 logger = get_logger(__name__)
@@ -50,6 +51,7 @@ def predict(payload : dict):
     try:
         prob = model.predict_proba(df_valid)[:,1][0]
         prediction = int(prob >= THRESHOLD)
+        store_prediction(df_valid, prob, prediction)
     except Exception as e:
         logger.error(f"Prediction failed: {e}")
         raise HTTPException(status_code=500, detail = "Prediction failed")
