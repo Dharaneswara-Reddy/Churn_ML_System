@@ -1,3 +1,7 @@
+"""
+Central logging configuration for the churn system.
+"""
+
 import logging
 from pathlib import Path
 
