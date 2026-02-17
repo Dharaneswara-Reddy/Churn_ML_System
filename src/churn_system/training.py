@@ -127,6 +127,9 @@ def main():
     print(f"Train tenure range: {X_train['Tenure Months'].min()} - {X_train['Tenure Months'].max()}")
     print(f"Test tenure range: {X_test['Tenure Months'].min()} - {X_test['Tenure Months'].max()}")
 
+    reference_path = "data/training_reference.csv"
+    X_train.to_csv(reference_path, index = False)
+    print("Training reference data saved.")
         
     pipeline.fit(X_train,y_train)
     

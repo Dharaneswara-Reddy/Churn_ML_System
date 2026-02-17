@@ -1,5 +1,3 @@
-# schema.py
-
 TARGET_COLUMN = "Churn Value"
 
 REQUIRED_COLUMNS = {
