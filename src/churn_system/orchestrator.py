@@ -9,6 +9,7 @@ from pathlib import Path
 
 from churn_system.model_health import evaluate_model_health
 from churn_system.training import main as train_model
+from churn_system.retraining_data import build_retraining_dataset
 
 HEALTH_FILE = Path("models/monitoring/health_report.json")
 
@@ -31,9 +32,12 @@ def run_lifecycle():
     retrain_needed = report.get("retraining_recommended", False)
     
     if retrain_needed:
-        print("\n Drift Identified - retraining triggered.")
+        print("\n Drift Identified - preparing retraining data.")
+        build_retraining_dataset()
+        print("Started retraining...")
         train_model()
         print("Retraining Completed")
+        
     else:
         print("\n Model healthy, No retraining triggered.")
         

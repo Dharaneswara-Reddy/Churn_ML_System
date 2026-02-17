@@ -4,6 +4,7 @@ import numpy as np
 import pickle
 from datetime import datetime
 import json
+from pathlib import Path
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -20,11 +21,11 @@ from sklearn.metrics import (
     average_precision_score
 )
 
-
-
+from churn_system.logger import get_logger
 from churn_system.schema import TARGET_COLUMN, REQUIRED_COLUMNS, ALLOWED_TARGET_VALUES
 
-MODEL_VERSION = "v1"
+MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
+logger = get_logger(__name__)
 
 def load_data(path):
     return pd.read_csv(path)
@@ -50,7 +51,12 @@ def summarize_feature(name, train_series, test_series):
     
 
 def main():
-    df = load_data("data/Telco_customer_churn_raw.csv")
+    data_path = Path("data/retraining_dataset.csv")
+    if not data_path.exists():
+        data_path = "data/Telco_customer_churn_raw.csv"
+    df = load_data(data_path)
+    logger.info(f"Training dataset used: {data_path}")
+    logger.info(f"Training samples: {len(df)}")
     validate_data(df)
     
     df["Total Charges"] = pd.to_numeric(df["Total Charges"],errors='coerce')
@@ -129,19 +135,19 @@ def main():
 
     reference_path = "data/training_reference.csv"
     X_train.to_csv(reference_path, index = False)
-    print("Training reference data saved.")
+    logger.info("Training reference data saved.")
         
     pipeline.fit(X_train,y_train)
     
     probs = pipeline.predict_proba(X_test)[:,1]
     preds = pipeline.predict(X_test)
     
-    print(f"Accuracy : {accuracy_score(y_test, preds):.4f}")
-    print(f"Precision: {precision_score(y_test,preds):.4f}")
-    print(f"Recall : {recall_score(y_test,preds):.4f}")
-    print(f"F1-Score: {f1_score(y_test,preds):.4f}")
-    print(f"ROC-AUC: {roc_auc_score(y_test,probs):.4f}")
-    print(f"PR-AUC: {average_precision_score(y_test,probs):.4f}")
+    logger.info(f"Accuracy : {accuracy_score(y_test, preds):.4f}")
+    logger.info(f"Precision: {precision_score(y_test,preds):.4f}")
+    logger.info(f"Recall : {recall_score(y_test,preds):.4f}")
+    logger.info(f"F1-Score: {f1_score(y_test,preds):.4f}")
+    logger.info(f"ROC-AUC: {roc_auc_score(y_test,probs):.4f}")
+    logger.info(f"PR-AUC: {average_precision_score(y_test,probs):.4f}")
     
     for t in [0.3, 0.5, 0.7]:
         preds_t = (probs >= t).astype(int)
@@ -157,6 +163,7 @@ def main():
     
     with open(f"{model_dir}/model.pkl", "wb") as f:
         pickle.dump(pipeline, f)
+        logger.info(f"Model saved at {model_dir}")
         
         
     metadata = {
