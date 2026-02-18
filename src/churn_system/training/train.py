@@ -183,7 +183,8 @@ def main():
     "class_weight": "balanced",
     "features_used": list(X_train.columns),
     "notes": "Day 7 model with drift-aware split and cost-sensitive learning",
-    "metrics" : metrics
+    "metrics" : metrics,
+    "dataset" : str(data_path)
     }
     
     with open(f"{model_dir}/metadata.json", "w") as f:
