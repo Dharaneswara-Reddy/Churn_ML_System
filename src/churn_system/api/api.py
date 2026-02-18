@@ -21,7 +21,7 @@ app = FastAPI(title="Churn Prediction API")
 
 # Load the model Once at startup
 
-model_path = Path(config["model"]["production_path"])
+model_path = Path(CONFIG["paths"]["production_model"])
 
 with open(model_path,"rb") as f:
     model = pickle.load(f)
