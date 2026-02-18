@@ -21,7 +21,7 @@ from sklearn.metrics import (
     average_precision_score
 )
 
-from churn_system.logger import get_logger
+from churn_system.logging.logger import get_logger
 from churn_system.schema import TARGET_COLUMN, REQUIRED_COLUMNS, ALLOWED_TARGET_VALUES
 
 MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -7,11 +7,11 @@ Runs monitoring pipeline and decides whether model retraining should be executed
 import json
 from pathlib import Path
 
-from churn_system.model_compare import compare_models
-from churn_system.model_health import evaluate_model_health
-from churn_system.training import main as train_model
-from churn_system.retraining_data import build_retraining_dataset
-from churn_system.promote import promote_model
+from churn_system.lifecycle.model_compare import compare_models
+from churn_system.monitoring.model_health import evaluate_model_health
+from churn_system.training.train import main as train_model
+from churn_system.new_data.retraining_data import build_retraining_dataset
+from churn_system.lifecycle.promote import promote_model
 
 HEALTH_FILE = Path("models/monitoring/health_report.json")
 

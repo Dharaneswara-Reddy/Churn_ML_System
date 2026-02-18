@@ -7,7 +7,7 @@ model retraining should be triggered.
 
 import json
 from pathlib import Path
-from churn_system.drift import calculate_psi
+from churn_system.monitoring.drift import calculate_psi
 import pandas as pd
 import numpy as np
 
