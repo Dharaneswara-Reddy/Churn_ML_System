@@ -8,9 +8,13 @@ model retraining should be triggered.
 import json
 from pathlib import Path
 from churn_system.monitoring.drift import calculate_psi
+from churn_system.config.config import CONFIG
+from churn_system.logging.logger import get_logger
+
 import pandas as pd
 import numpy as np
 
+logger = get_logger(__name__,CONFIG["logging"]["monitoring"])
 
 TRAIN_PATH = Path("data/training_reference.csv")
 PROD_PATH = Path("data/inference_logs/predictions.csv")

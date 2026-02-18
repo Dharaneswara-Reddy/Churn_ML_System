@@ -11,6 +11,10 @@ shifted between training and production data.
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from churn_system.config.config import CONFIG
+from churn_system.logging.logger import get_logger
+
+logger = get_logger(__name__,CONFIG["logging"]["monitoring"])
 
 
 TRAIN_PATH = Path("data/training_reference.csv")

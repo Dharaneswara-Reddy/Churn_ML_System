@@ -23,9 +23,10 @@ from sklearn.metrics import (
 
 from churn_system.logging.logger import get_logger
 from churn_system.schema import TARGET_COLUMN, REQUIRED_COLUMNS, ALLOWED_TARGET_VALUES
+from churn_system.config.config import CONFIG
 
 MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
-logger = get_logger(__name__)
+logger = get_logger(__name__, CONFIG["logging"]["training"])
 
 def load_data(path):
     return pd.read_csv(path)

@@ -5,9 +5,14 @@ Champion vs Challenger Comparison.
 import json
 from pathlib import Path
 from sys import version
+from churn_system.logging.logger import get_logger
+from churn_system.config.config import CONFIG
 
 PRODUCTION_MODEL = Path("models/production/current/metadata.json")
 EXPERIMENTS_DIR = Path("models/experiments")
+
+logger = get_logger(__name__,CONFIG["logging"]["lifecycle"])
+
 
 def get_latest_experiment():
     versions = sorted(EXPERIMENTS_DIR.glob("churn_model_*"))

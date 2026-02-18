@@ -10,9 +10,10 @@ from churn_system.schema import validate_inference_data
 from churn_system.config.config import load_config
 from churn_system.logging.logger import get_logger
 from churn_system.monitoring.prediction_store import store_prediction
+from churn_system.config.config import CONFIG
 from pathlib import Path
 
-logger = get_logger(__name__)
+logger = get_logger(__name__, CONFIG["logging"]["api"])
 
 config = load_config()
 

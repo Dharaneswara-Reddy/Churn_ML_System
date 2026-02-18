@@ -1,5 +1,10 @@
 import shutil
 from pathlib import Path
+from churn_system.logging.logger import get_logger
+from churn_system.config.config import CONFIG
+
+logger = get_logger(__name__,CONFIG["logging"]["lifecycle"])
+
 
 def promote_model(version: str):
     """
