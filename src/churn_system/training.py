@@ -149,6 +149,15 @@ def main():
     logger.info(f"ROC-AUC: {roc_auc_score(y_test,probs):.4f}")
     logger.info(f"PR-AUC: {average_precision_score(y_test,probs):.4f}")
     
+    metrics = {
+        "accuracy" : float(accuracy_score(y_test,preds)),
+        "precision" : float(precision_score(y_test, preds)),
+        "recall" : float(recall_score(y_test,preds)),
+        "f1_score" : float(f1_score(y_test, preds)),
+        "roc_auc" : float(roc_auc_score(y_test,probs)),
+        "pr_auc" : float(average_precision_score(y_test, probs))
+    }
+    
     for t in [0.3, 0.5, 0.7]:
         preds_t = (probs >= t).astype(int)
         print(
@@ -172,7 +181,8 @@ def main():
     "split_strategy": "time-aware (tenure-based)",
     "class_weight": "balanced",
     "features_used": list(X_train.columns),
-    "notes": "Day 7 model with drift-aware split and cost-sensitive learning"
+    "notes": "Day 7 model with drift-aware split and cost-sensitive learning",
+    "metrics" : metrics
     }
     
     with open(f"{model_dir}/metadata.json", "w") as f:

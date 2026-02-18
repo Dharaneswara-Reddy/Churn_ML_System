@@ -7,9 +7,11 @@ Runs monitoring pipeline and decides whether model retraining should be executed
 import json
 from pathlib import Path
 
+from churn_system.model_compare import compare_models
 from churn_system.model_health import evaluate_model_health
 from churn_system.training import main as train_model
 from churn_system.retraining_data import build_retraining_dataset
+from churn_system.promote import promote_model
 
 HEALTH_FILE = Path("models/monitoring/health_report.json")
 
@@ -36,9 +38,18 @@ def run_lifecycle():
         build_retraining_dataset()
         print("Started retraining...")
         train_model()
-        print("Retraining Completed")
+        print("Evaluating challenger model...")
+        
+        if compare_models():
+            print("Challenger wins - promoting model.")
+            latest_version = sorted(
+                Path("models/experiments").glob("churn_model_*")
+            )[-1].name
+            
+            promote_model(latest_version)
         
     else:
+        print("Challenger Rejected. Keep current production model.")
         print("\n Model healthy, No retraining triggered.")
         
     print("\n --- Evaluation is Completed ---")
