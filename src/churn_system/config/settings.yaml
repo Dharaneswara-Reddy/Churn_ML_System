@@ -13,3 +13,6 @@ logging:
   training: "training.log"
   monitoring: "monitoring.log"
   lifecycle: "lifecycle.log"
+
+scheduler:
+  interval_seconds: 60
