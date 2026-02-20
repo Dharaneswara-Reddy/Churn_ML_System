@@ -24,6 +24,7 @@ from sklearn.metrics import (
 from churn_system.logging.logger import get_logger
 from churn_system.schema import TARGET_COLUMN, REQUIRED_COLUMNS, ALLOWED_TARGET_VALUES
 from churn_system.config.config import CONFIG
+from churn_system.features.build_features import build_features
 
 MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
 logger = get_logger(__name__, CONFIG["logging"]["training"])
@@ -73,10 +74,9 @@ def main():
         "CLTV"
     ]
     
-    y = df[TARGET]
+    y = df["Churn Value"]
     log_target_distribution(y)
-    X = df.drop(columns=[TARGET] + [c for c in DROP_COLS if c in df.columns])
-    
+    X = build_features(df, training=True)  
     neg, pos = np.bincount(y)
     ratio = neg / pos
     print(f"Negative/Positive ratio: {ratio:.2f}")

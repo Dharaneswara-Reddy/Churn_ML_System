@@ -12,6 +12,7 @@ from churn_system.config.config import load_config
 from churn_system.logging.logger import get_logger
 from churn_system.monitoring.prediction_store import store_prediction
 from churn_system.config.config import CONFIG
+from churn_system.features.build_features import build_features
 from pathlib import Path
 
 logger = get_logger(__name__, CONFIG["logging"]["api"])
@@ -45,6 +46,7 @@ def predict(payload : dict):
     
     try:
         df = pd.DataFrame([payload])
+        df = build_features(df,training=False)
         df_valid = validate_inference_data(df)
     except Exception as e:
         logger.error(f'Validation failed: {e}')

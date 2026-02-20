@@ -67,5 +67,4 @@ def validate_inference_data(df):
             f"Target column '{TARGET_COLUMN}' must not be present at inference time"
         )
 
-    # Keep exact column order irrelevant (sklearn handles by name)
     return df[list(required_features)]
