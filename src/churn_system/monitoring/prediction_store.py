@@ -1,58 +1,39 @@
-"""
-Prediction storage module.
-
-Stores inference requests and model outputs so they 
-can later be used for monitoring and retraining.
-"""
-
 import pandas as pd
 from pathlib import Path
-from datetime import date, datetime, timezone
-from churn_system.schema import REQUIRED_COLUMNS
+from datetime import datetime, timezone
 
-LOG_PATH = Path("data/inference_logs")
-LOG_PATH.mkdir(parents=True, exist_ok=True)
+from churn_system.logging.logger import get_logger
+from churn_system.config.config import CONFIG
 
-FILE_PATH = LOG_PATH / "predictions.csv"
+logger = get_logger(__name__, CONFIG["logging"]["monitoring"])
 
-LOG_COLUMNS = sorted(list(REQUIRED_COLUMNS)) + [
-    "prediction_probability",
-    "prediction",
-    "timestamp",
-]
+LOG_PATH = Path("data/inference_logs/predictions.csv")
+LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-def store_prediction(input_df: pd.DataFrame,
-                     probability: float,
-                     prediction: int) -> None:
+
+def store_prediction(input_record: dict, probability: float, prediction: int):
     """
-    Store a model inference result for monitoring and retraining.
-
-    Appends the input features, predicted probability, final prediction,
-    and a UTC timestamp to a persistent CSV log. The stored records can
-    later be used for performance analysis, drift detection, and
-    supervised retraining.
-
-    Parameters
-
-    input_df : pd.DataFrame
-        Validated model input features.
-    probability : float
-        Predicted probability for the positive class.
-    prediction : int
-        Final binary prediction.
+    Store inference request safely with fixed schema.
     """
-    record = input_df.copy()
-    
-    record["prediction_probability"] = probability
-    record["prediction"] = prediction
-    record["timestamp"] = datetime.now(timezone.utc)
-    
-    record = record.reindex(columns=LOG_COLUMNS)
-    
-    if FILE_PATH.exists():
-        record.to_csv(FILE_PATH, mode = "a", header = False, index = False)
-    else:
-        record.to_csv(FILE_PATH, index = False)
-        
-        
-    
+
+    record = input_record.copy()
+
+
+    record["prediction_probability"] = float(probability)
+    record["prediction"] = int(prediction)
+    record["timestamp"] = datetime.now(timezone.utc).isoformat()
+
+    df = pd.DataFrame([record])
+
+    df = df.reindex(sorted(df.columns), axis=1)
+
+    write_header = not LOG_PATH.exists()
+
+    df.to_csv(
+        LOG_PATH,
+        mode="a",
+        header=write_header,
+        index=False
+    )
+
+    logger.info("Prediction stored successfully.")

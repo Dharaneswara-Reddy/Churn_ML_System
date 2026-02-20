@@ -2,6 +2,7 @@ from tracemalloc import start
 from wsgiref import validate
 from fastapi import FastAPI, HTTPException
 import pickle
+from requests import request
 import time
 import pandas as pd
 
@@ -52,13 +53,13 @@ def predict(payload : dict):
     try:
         prob = model.predict_proba(df_valid)[:,1][0]
         prediction = int(prob >= THRESHOLD)
-        store_prediction(df_valid, prob, prediction)
+        store_prediction(payload, prob, prediction)
     except Exception as e:
         logger.error(f"Prediction failed: {e}")
         raise HTTPException(status_code=500, detail = "Prediction failed")
     
     latency = time.time() - start_time
-    
+    logger.info(f"Inference dataframe shape: {df.shape}")
     logger.info(
         f"Prediction made | prob = {prob:.4f} | pred = {prediction} | latency = {latency:.4f}s"
     )
