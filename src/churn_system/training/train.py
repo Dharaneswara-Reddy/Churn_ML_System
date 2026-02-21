@@ -77,6 +77,8 @@ def main():
     y = df["Churn Value"]
     log_target_distribution(y)
     X = build_features(df, training=True)  
+    feature_schema = list(X.columns)
+    logger.info(f"Feature schema captured ({len(feature_schema)} features)")
     neg, pos = np.bincount(y)
     ratio = neg / pos
     print(f"Negative/Positive ratio: {ratio:.2f}")
@@ -181,8 +183,8 @@ def main():
     "training_date": datetime.now().strftime("%Y-%m-%d"),
     "split_strategy": "time-aware (tenure-based)",
     "class_weight": "balanced",
-    "features_used": list(X_train.columns),
-    "notes": "Day 7 model with drift-aware split and cost-sensitive learning",
+    "feature_schema" : feature_schema,
+    "feature_count" : len(feature_schema),
     "metrics" : metrics,
     "dataset" : str(data_path)
     }

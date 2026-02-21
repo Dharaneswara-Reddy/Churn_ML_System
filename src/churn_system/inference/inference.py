@@ -1,5 +1,7 @@
 import pickle
 import pandas as pd
+import json
+from pathlib import Path
 
 from churn_system.schema import validate_inference_data
 
@@ -45,11 +47,36 @@ data = {
     "Churn Reason": ["Unknown"]
 }
 
+
+def load_feature_contract():
+    metadata_path = Path("models/production/current/metadata.json")
+
+    if not metadata_path.exists():
+        raise RuntimeError("Metadata file missing in production model")
+
+    with open(metadata_path, "r") as f:
+        metadata = json.load(f)
+
+    return metadata["feature_schema"]
+
 df = pd.DataFrame(data)
 
 
 df_valid = validate_inference_data(df)
 
+expected_features = load_feature_contract()
+
+incoming_features = list(df_valid.columns)
+
+if incoming_features != expected_features:
+    missing = set(expected_features) - set(incoming_features)
+    extra = set(incoming_features) - set(expected_features)
+
+    raise ValueError(
+        f"Feature schema mismatch | Missing: {missing} | Extra: {extra}"
+    )
+
 
 prob = model.predict_proba(df_valid)[:, 1]
 print(f"Churn probability: {prob[0]:.4f}")
+
