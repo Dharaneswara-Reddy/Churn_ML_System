@@ -25,12 +25,12 @@ from churn_system.logging.logger import get_logger
 from churn_system.schema import TARGET_COLUMN, REQUIRED_COLUMNS, ALLOWED_TARGET_VALUES
 from churn_system.config.config import CONFIG
 from churn_system.features.build_features import build_features
+from churn_system.training.steps.data_ingestion import load_training_data
 
 MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
 logger = get_logger(__name__, CONFIG["logging"]["training"])
 
-def load_data(path):
-    return pd.read_csv(path)
+
 
 def validate_data(df):
     missing_cols = REQUIRED_COLUMNS - set(df.columns)
@@ -56,7 +56,7 @@ def main():
     data_path = Path("data/retraining_dataset.csv")
     if not data_path.exists():
         data_path = "data/Telco_customer_churn_raw.csv"
-    df = load_data(data_path)
+    df = load_training_data()
     logger.info(f"Training dataset used: {data_path}")
     logger.info(f"Training samples: {len(df)}")
     validate_data(df)
