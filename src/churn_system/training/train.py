@@ -22,23 +22,18 @@ from sklearn.metrics import (
 )
 
 from churn_system.logging.logger import get_logger
-from churn_system.schema import TARGET_COLUMN, REQUIRED_COLUMNS, ALLOWED_TARGET_VALUES
+from churn_system.schema import TARGET_COLUMN
 from churn_system.config.config import CONFIG
 from churn_system.features.build_features import build_features
 from churn_system.training.steps.data_ingestion import load_training_data
+from churn_system.training.steps.data_validation import run_data_validation
 
 MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
 logger = get_logger(__name__, CONFIG["logging"]["training"])
 
 
 
-def validate_data(df):
-    missing_cols = REQUIRED_COLUMNS - set(df.columns)
-    if missing_cols:
-        raise ValueError(f"Missing required columns: {missing_cols}")
-    
-    if not set(df[TARGET_COLUMN].unique()).issubset(ALLOWED_TARGET_VALUES):
-        raise ValueError(f"Invalid target values found : {df[TARGET_COLUMN].unique()}")
+
     
 def log_target_distribution(y):
     values, counts = np.unique(y, return_counts = True)
@@ -59,7 +54,7 @@ def main():
     df = load_training_data()
     logger.info(f"Training dataset used: {data_path}")
     logger.info(f"Training samples: {len(df)}")
-    validate_data(df)
+    df = run_data_validation(df)
     
     df["Total Charges"] = pd.to_numeric(df["Total Charges"],errors='coerce')
     df["Total Charges"] = df["Total Charges"].fillna(0)
