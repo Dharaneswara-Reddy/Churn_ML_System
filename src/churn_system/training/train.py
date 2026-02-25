@@ -27,6 +27,7 @@ from churn_system.config.config import CONFIG
 from churn_system.training.steps.data_ingestion import load_training_data
 from churn_system.training.steps.data_validation import run_data_validation
 from churn_system.training.steps.feature_engineering import run_feature_engineering
+from churn_system.training.steps.model_training import train_model
 
 MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
 logger = get_logger(__name__, CONFIG["logging"]["training"])
@@ -79,22 +80,8 @@ def main():
     print(f"Negative/Positive ratio: {ratio:.2f}")
 
     
-    categorical_cols = X.select_dtypes(include = ["object"]).columns
-    numerical_cols = X.select_dtypes(exclude = ["object"]).columns
-    
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("num", StandardScaler(), numerical_cols),
-            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols)
-        ]
-    )
-    
-    pipeline = Pipeline(
-        steps = [
-            ("preprocessor", preprocessor),
-            ("model", LogisticRegression(max_iter=1000,class_weight="balanced"))
-        ]
-    )
+
+
     
     df_sorted = df.sort_values("Tenure Months")
     
@@ -135,7 +122,7 @@ def main():
     X_train.to_csv(reference_path, index = False)
     logger.info("Training reference data saved.")
         
-    pipeline.fit(X_train,y_train)
+    pipeline = train_model(X_train, y_train)
     
     probs = pipeline.predict_proba(X_test)[:,1]
     preds = pipeline.predict(X_test)
