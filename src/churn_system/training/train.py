@@ -6,11 +6,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.linear_model import LogisticRegression
+
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.metrics import (
     accuracy_score,
@@ -28,6 +24,7 @@ from churn_system.training.steps.data_ingestion import load_training_data
 from churn_system.training.steps.data_validation import run_data_validation
 from churn_system.training.steps.feature_engineering import run_feature_engineering
 from churn_system.training.steps.model_training import train_model
+from churn_system.training.steps.model_evaluation import evaluate_model
 
 MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
 logger = get_logger(__name__, CONFIG["logging"]["training"])
@@ -123,35 +120,7 @@ def main():
     logger.info("Training reference data saved.")
         
     pipeline = train_model(X_train, y_train)
-    
-    probs = pipeline.predict_proba(X_test)[:,1]
-    preds = pipeline.predict(X_test)
-    
-    logger.info(f"Accuracy : {accuracy_score(y_test, preds):.4f}")
-    logger.info(f"Precision: {precision_score(y_test,preds):.4f}")
-    logger.info(f"Recall : {recall_score(y_test,preds):.4f}")
-    logger.info(f"F1-Score: {f1_score(y_test,preds):.4f}")
-    logger.info(f"ROC-AUC: {roc_auc_score(y_test,probs):.4f}")
-    logger.info(f"PR-AUC: {average_precision_score(y_test,probs):.4f}")
-    
-    metrics = {
-        "accuracy" : float(accuracy_score(y_test,preds)),
-        "precision" : float(precision_score(y_test, preds)),
-        "recall" : float(recall_score(y_test,preds)),
-        "f1_score" : float(f1_score(y_test, preds)),
-        "roc_auc" : float(roc_auc_score(y_test,probs)),
-        "pr_auc" : float(average_precision_score(y_test, probs))
-    }
-    
-    for t in [0.3, 0.5, 0.7]:
-        preds_t = (probs >= t).astype(int)
-        print(
-            f"Threshold {t} | "
-            f"Precision: {precision_score(y_test, preds_t):.3f} | "
-            f"Recall: {recall_score(y_test, preds_t):.3f}"
-        )
-
-    
+    metrics, probs = evaluate_model(pipeline, X_test, y_test)
     model_dir = f"models/experiments/churn_model_{MODEL_VERSION}"
     os.makedirs(model_dir, exist_ok=True)
     
