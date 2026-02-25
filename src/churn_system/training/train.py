@@ -24,9 +24,9 @@ from sklearn.metrics import (
 from churn_system.logging.logger import get_logger
 from churn_system.schema import TARGET_COLUMN
 from churn_system.config.config import CONFIG
-from churn_system.features.build_features import build_features
 from churn_system.training.steps.data_ingestion import load_training_data
 from churn_system.training.steps.data_validation import run_data_validation
+from churn_system.training.steps.feature_engineering import run_feature_engineering
 
 MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
 logger = get_logger(__name__, CONFIG["logging"]["training"])
@@ -71,7 +71,7 @@ def main():
     
     y = df["Churn Value"]
     log_target_distribution(y)
-    X = build_features(df, training=True)  
+    X = run_feature_engineering(df) 
     feature_schema = list(X.columns)
     logger.info(f"Feature schema captured ({len(feature_schema)} features)")
     neg, pos = np.bincount(y)
