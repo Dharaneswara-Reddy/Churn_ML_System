@@ -1,4 +1,11 @@
+from pathlib import Path
+import json
+
 TARGET_COLUMN = "Churn Value"
+
+ALLOWED_TARGET_VALUES = {0, 1}
+
+
 
 REQUIRED_COLUMNS = {
     "CustomerID",
@@ -33,10 +40,8 @@ REQUIRED_COLUMNS = {
     "Churn Value",
     "Churn Score",
     "CLTV",
-    "Churn Reason"
+    "Churn Reason",
 }
-
-ALLOWED_TARGET_VALUES = {0, 1}
 
 
 def validate_training_data(df):
@@ -50,21 +55,44 @@ def validate_training_data(df):
         )
 
 
+
+PRODUCTION_METADATA = Path(
+    "models/production/current/current/metadata.json"
+)
+
+
+def load_feature_schema():
+    """
+    Load feature schema from deployed production model metadata.
+    """
+    if not PRODUCTION_METADATA.exists():
+        raise FileNotFoundError(
+            "Production metadata not found. Cannot validate inference schema."
+        )
+
+    with open(PRODUCTION_METADATA, "r") as f:
+        metadata = json.load(f)
+
+    return set(metadata["feature_schema"])
+
+
 def validate_inference_data(df):
     """
-    Enforce the SAME feature contract used during training.
-    If the model saw a feature during training, it must exist at inference.
+    Validate inference dataframe against MODEL FEATURE SCHEMA
+    (not raw dataset schema).
     """
 
-    required_features = REQUIRED_COLUMNS - {TARGET_COLUMN}
+    required_features = load_feature_schema()
 
     missing = required_features - set(df.columns)
     if missing:
-        raise ValueError(f"Missing required features at inference: {missing}")
+        raise ValueError(
+            f"Missing required model features at inference: {missing}"
+        )
 
     if TARGET_COLUMN in df.columns:
         raise ValueError(
-            f"Target column '{TARGET_COLUMN}' must not be present at inference time"
+            f"Target column '{TARGET_COLUMN}' must not appear at inference"
         )
 
     return df[list(required_features)]
