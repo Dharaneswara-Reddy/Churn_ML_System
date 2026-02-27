@@ -5,7 +5,6 @@ Coordinates the full ML training workflow:
 Data → Validation → Feature Engineering → Training → Evaluation → Artifact Saving
 """
 
-import os
 import json
 import pickle
 import numpy as np
@@ -16,15 +15,17 @@ from churn_system.logging.logger import get_logger
 from churn_system.schema import TARGET_COLUMN
 from churn_system.config.config import CONFIG
 
+# pipeline steps
 from churn_system.training.steps.data_ingestion import load_training_data
 from churn_system.training.steps.data_validation import run_data_validation
 from churn_system.training.steps.feature_engineering import run_feature_engineering
-from churn_system.training.steps.model_training import train_model
-from churn_system.training.steps.model_evaluation import evaluate_model
+from churn_system.training.steps.model_training import train_candidate_models
+from churn_system.training.steps.model_evaluation import evaluate_candidates
 
 
 MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
 logger = get_logger(__name__, CONFIG["logging"]["training"])
+
 
 
 def log_target_distribution(y):
@@ -41,7 +42,9 @@ def summarize_feature(name, train_series, test_series):
     )
 
 
+
 def main():
+
     logger.info("===== Training Pipeline Started =====")
 
     df, data_path = load_training_data()
@@ -70,13 +73,11 @@ def main():
 
     log_target_distribution(y_train)
 
-
     X_train = run_feature_engineering(train_df)
     X_test = run_feature_engineering(test_df)
 
     feature_schema = list(X_train.columns)
     logger.info(f"Feature schema captured ({len(feature_schema)} features)")
-
 
     summarize_feature(
         "Tenure Months",
@@ -106,7 +107,6 @@ def main():
         f"{test_df['Tenure Months'].min()} - {test_df['Tenure Months'].max()}"
     )
 
-    # Save training reference for drift monitoring
     reference_path = Path(CONFIG["paths"]["training_reference"])
     reference_path.parent.mkdir(parents=True, exist_ok=True)
     X_train.to_csv(reference_path, index=False)
@@ -114,16 +114,27 @@ def main():
     logger.info("Training reference data saved.")
 
 
-    pipeline, metrics, model_name = train_model(
-        X_train,
-        y_train,
+
+    logger.info("Training candidate models...")
+
+    candidate_models = train_candidate_models(X_train, y_train)
+
+    logger.info("Evaluating candidate models...")
+
+    pipeline, experiment_report, metrics = evaluate_candidates(
+        candidate_models,
         X_test,
         y_test
     )
-    
-    logger.info(f"Champion model : {model_name}")
 
-    model_dir = Path(CONFIG["paths"]["experiments_dir"]) / f"churn_model_{MODEL_VERSION}"
+    winner_name = experiment_report["winner"]
+
+    logger.info(f"Champion model selected: {winner_name}")
+
+    model_dir = (
+        Path(CONFIG["paths"]["experiments_dir"])
+        / f"churn_model_{MODEL_VERSION}"
+    )
     model_dir.mkdir(parents=True, exist_ok=True)
 
     model_path = model_dir / "model.pkl"
@@ -133,13 +144,18 @@ def main():
 
     logger.info(f"Model saved at {model_path}")
 
+    # Save experiment comparison report
+    with open(model_dir / "experiment_report.json", "w") as f:
+        json.dump(experiment_report, f, indent=2)
+
+    logger.info("Experiment report saved.")
+
 
     metadata = {
         "model_version": MODEL_VERSION,
         "training_date": datetime.now().strftime("%Y-%m-%d"),
-        "model_type" : model_name,
+        "model_type": winner_name,
         "split_strategy": "time-aware (tenure-based)",
-        "class_weight": "balanced",
         "feature_schema": feature_schema,
         "feature_count": len(feature_schema),
         "metrics": metrics,
@@ -151,8 +167,6 @@ def main():
 
     logger.info("Metadata saved.")
     logger.info("===== Training Pipeline Completed =====")
-
-
 
 
 if __name__ == "__main__":
