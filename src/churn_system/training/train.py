@@ -114,9 +114,14 @@ def main():
     logger.info("Training reference data saved.")
 
 
-    pipeline = train_model(X_train, y_train)
-
-    metrics, probs = evaluate_model(pipeline, X_test, y_test)
+    pipeline, metrics, model_name = train_model(
+        X_train,
+        y_train,
+        X_test,
+        y_test
+    )
+    
+    logger.info(f"Champion model : {model_name}")
 
     model_dir = Path(CONFIG["paths"]["experiments_dir"]) / f"churn_model_{MODEL_VERSION}"
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -132,6 +137,7 @@ def main():
     metadata = {
         "model_version": MODEL_VERSION,
         "training_date": datetime.now().strftime("%Y-%m-%d"),
+        "model_type" : model_name,
         "split_strategy": "time-aware (tenure-based)",
         "class_weight": "balanced",
         "feature_schema": feature_schema,
