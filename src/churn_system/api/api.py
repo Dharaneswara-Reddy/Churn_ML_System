@@ -13,6 +13,7 @@ from churn_system.logging.logger import get_logger
 from churn_system.monitoring.prediction_store import store_prediction
 from churn_system.config.config import CONFIG
 from churn_system.features.build_features import build_features
+from churn_system.api.schema_generator import generate_request_model
 from pathlib import Path
 
 logger = get_logger(__name__, CONFIG["logging"]["api"])
@@ -20,6 +21,7 @@ logger = get_logger(__name__, CONFIG["logging"]["api"])
 config = load_config()
 
 app = FastAPI(title="Churn Prediction API")
+RequestModel = generate_request_model()
 
 # Load the model Once at startup
 
@@ -35,7 +37,7 @@ def health_check():
     return {"status" : "ok", "message" : "Churn model is running"}
 
 @app.post("/predict")
-def predict(payload : dict):
+def predict(payload: RequestModel):
     """
     
     Accepts raw feature dictionary and returns churn probability
@@ -45,7 +47,7 @@ def predict(payload : dict):
     logger.info("Received prediction request")
     
     try:
-        df = pd.DataFrame([payload])
+        df = pd.DataFrame([payload.model_dump()])
         df = build_features(df,training=False)
         df_valid = validate_inference_data(df)
     except Exception as e:
@@ -55,7 +57,7 @@ def predict(payload : dict):
     try:
         prob = model.predict_proba(df_valid)[:,1][0]
         prediction = int(prob >= THRESHOLD)
-        store_prediction(payload, prob, prediction)
+        store_prediction(payload.model_dump(), prob, prediction)
     except Exception as e:
         logger.error(f"Prediction failed: {e}")
         raise HTTPException(status_code=500, detail = "Prediction failed")
