@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+from churn_system.inference.model_contract import get_feature_schema
 
 TARGET_COLUMN = "Churn Value"
 
@@ -61,19 +62,7 @@ PRODUCTION_METADATA = Path(
 )
 
 
-def load_feature_schema():
-    """
-    Load feature schema from deployed production model metadata.
-    """
-    if not PRODUCTION_METADATA.exists():
-        raise FileNotFoundError(
-            "Production metadata not found. Cannot validate inference schema."
-        )
 
-    with open(PRODUCTION_METADATA, "r") as f:
-        metadata = json.load(f)
-
-    return set(metadata["feature_schema"])
 
 
 def validate_inference_data(df):
@@ -82,7 +71,7 @@ def validate_inference_data(df):
     (not raw dataset schema).
     """
 
-    required_features = load_feature_schema()
+    required_features = set(get_feature_schema())
 
     missing = required_features - set(df.columns)
     if missing:
