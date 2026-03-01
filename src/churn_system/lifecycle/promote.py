@@ -9,54 +9,58 @@ from churn_system.lifecycle.lineage import record_lineage
 logger = get_logger(__name__, CONFIG["logging"]["lifecycle"])
 
 
+def load_metadata(path: Path):
+    with open(path, "r") as f:
+        return json.load(f)
+
+
+def schemas_match(prod_meta, new_meta):
+    prod_schema = prod_meta.get("feature_schema", [])
+    new_schema = new_meta.get("feature_schema", [])
+
+    return prod_schema == new_schema
+
+
 def promote_model(version: str):
     """
     Promote a trained model version to production.
 
-    Parameters
-        version : str
-            Name of the model directory inside `models/experiments/`.
-            Example: "churn_model_v1"
-
-        1. Checks whether the requested experiment exists.
-        2. Removes the existing production model (if any).
-        3. Copies the selected experiment info for production.
-        4. Makes the promoted model the one used by the API.
-
-        Note :
-            if the requested model version does not exist it raises ValueError.
-
-        The API Always loads models from the production directory, never directly from experiments.
+    Ensures schema compatibility before promotion.
     """
 
     experiments_dir = Path(CONFIG["paths"]["experiments_dir"])
     production_dir = Path(CONFIG["paths"]["production_model"]).parent
 
     source = experiments_dir / version
-    target = production_dir
+    target = production_dir / "current"
 
     if not source.exists():
         raise ValueError(f"Model version {version} does not exist.")
 
-    metadata_path = source / "metadata.json"
+    new_metadata_path = source / "metadata.json"
 
-    if not metadata_path.exists():
+    if not new_metadata_path.exists():
         raise ValueError("metadata.json missing for experiment.")
 
-    with open(metadata_path, "r") as f:
-        metadata = json.load(f)
+    new_metadata = load_metadata(new_metadata_path)
 
     parent_model = None
-    existing_metadata = target / "metadata.json"
+    existing_metadata_path = target / "metadata.json"
 
-    if existing_metadata.exists():
-        try:
-            with open(existing_metadata, "r") as f:
-                parent_data = json.load(f)
-                parent_model = parent_data.get("model_version")
-        except Exception:
-            parent_model = "unknown"
+    # ✅ Schema Safety Check
+    if existing_metadata_path.exists():
+        prod_metadata = load_metadata(existing_metadata_path)
 
+        parent_model = prod_metadata.get("model_version")
+
+        if not schemas_match(prod_metadata, new_metadata):
+            logger.error(
+                "Feature schema mismatch detected. Promotion blocked."
+            )
+            logger.error("Production and challenger schemas differ.")
+            return
+
+    # Promote
     if target.exists():
         shutil.rmtree(target)
 
@@ -66,18 +70,8 @@ def promote_model(version: str):
 
     record_lineage(
         model_version=version,
-        metrics=metadata.get("metrics", {}),
-        dataset_used=metadata.get("dataset", "unknown"),
+        metrics=new_metadata.get("metrics", {}),
+        dataset_used=new_metadata.get("dataset", "unknown"),
         trigger="drift_retraining",
         parent_model=parent_model,
     )
-
-
-if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) != 2:
-        print("Usage: python -m churn_system.lifecycle.promote <version>")
-        sys.exit(1)
-
-    promote_model(sys.argv[1])
