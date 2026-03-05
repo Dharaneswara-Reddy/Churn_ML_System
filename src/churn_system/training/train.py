@@ -1,82 +1,206 @@
 """
-Model Training Step
+Training Orchestrator
 
-Trains candidate models but does NOT evaluate them.
-Evaluation happens in the evaluation step.
+Coordinates the full ML training workflow:
+Data → Validation → Feature Engineering → Training → Evaluation → Artifact Saving
 """
 
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+import json
+import pickle
+import numpy as np
+from datetime import datetime
+from pathlib import Path
 
 from churn_system.logging.logger import get_logger
+from churn_system.schema import TARGET_COLUMN
 from churn_system.config.config import CONFIG
 
+# Pipeline steps
+from churn_system.training.steps.data_ingestion import load_training_data
+from churn_system.training.steps.data_validation import run_data_validation
+from churn_system.training.steps.feature_engineering import run_feature_engineering
+from churn_system.training.steps.model_training import train_model
+from churn_system.training.steps.model_evaluation import evaluate_candidates
+
+
+MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
 logger = get_logger(__name__, CONFIG["logging"]["training"])
 
 
-def build_preprocessor(X):
+def log_target_distribution(y):
+    values, counts = np.unique(y, return_counts=True)
+    dist = dict(zip(values, counts))
+    logger.info(f"Target distribution: {dist}")
 
-    categorical_cols = X.select_dtypes(include=["object"]).columns
-    numerical_cols = X.select_dtypes(exclude=["object"]).columns
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("num", StandardScaler(), numerical_cols),
-            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
-        ]
+def summarize_feature(name, train_series, test_series):
+    logger.info(
+        f"{name} | "
+        f"Train(mean={train_series.mean():.2f}, std={train_series.std():.2f}) | "
+        f"Test(mean={test_series.mean():.2f}, std={test_series.std():.2f})"
     )
 
-    return preprocessor
 
+def main():
+    logger.info("===== Training Pipeline Started =====")
 
-def train_model(X_train, y_train):
-    """
-    Train candidate models and return pipelines.
-    """
+    # ----------------------------
+    # Data ingestion
+    # ----------------------------
+    df, data_path = load_training_data()
 
-    logger.info("Building preprocessing pipeline")
+    logger.info(f"Training dataset used: {data_path}")
+    logger.info(f"Training samples: {len(df)}")
 
-    preprocessor = build_preprocessor(X_train)
+    # ----------------------------
+    # Data validation
+    # ----------------------------
+    df = run_data_validation(df)
 
-    models = {
-        "logistic_regression": LogisticRegression(
-            max_iter=1000,
-            class_weight="balanced"
-        ),
+    # Fix Total Charges column
+    df["Total Charges"] = (
+        df["Total Charges"]
+        .replace(" ", np.nan)
+        .astype(float)
+        .fillna(0)
+    )
 
-        "random_forest": RandomForestClassifier(
-            n_estimators=150,
-            max_depth=8,
-            random_state=42
-        ),
+    # ----------------------------
+    # Temporal split
+    # ----------------------------
+    df_sorted = df.sort_values("Tenure Months")
 
-        "gradient_boosting": GradientBoostingClassifier(
-            n_estimators=120,
-            learning_rate=0.08,
-            random_state=42
-        ),
+    split_index = int(0.8 * len(df_sorted))
+    train_df = df_sorted.iloc[:split_index]
+    test_df = df_sorted.iloc[split_index:]
+
+    y_train = train_df[TARGET_COLUMN]
+    y_test = test_df[TARGET_COLUMN]
+
+    log_target_distribution(y_train)
+
+    # ----------------------------
+    # Feature engineering
+    # ----------------------------
+    X_train = run_feature_engineering(train_df)
+    X_test = run_feature_engineering(test_df)
+
+    feature_schema = list(X_train.columns)
+
+    logger.info(f"Feature schema captured ({len(feature_schema)} features)")
+
+    # ----------------------------
+    # Feature statistics
+    # ----------------------------
+    summarize_feature(
+        "Tenure Months",
+        train_df["Tenure Months"],
+        test_df["Tenure Months"],
+    )
+
+    summarize_feature(
+        "Monthly Charges",
+        train_df["Monthly Charges"],
+        test_df["Monthly Charges"],
+    )
+
+    summarize_feature(
+        "Total Charges",
+        train_df["Total Charges"],
+        test_df["Total Charges"],
+    )
+
+    logger.info(
+        f"Train tenure range: "
+        f"{train_df['Tenure Months'].min()} - {train_df['Tenure Months'].max()}"
+    )
+
+    logger.info(
+        f"Test tenure range: "
+        f"{test_df['Tenure Months'].min()} - {test_df['Tenure Months'].max()}"
+    )
+
+    # ----------------------------
+    # Save training reference
+    # ----------------------------
+    reference_path = Path(CONFIG["paths"]["training_reference"])
+    reference_path.parent.mkdir(parents=True, exist_ok=True)
+
+    X_train.to_csv(reference_path, index=False)
+
+    logger.info("Training reference data saved.")
+
+    # ----------------------------
+    # Train candidate models
+    # ----------------------------
+    logger.info("Training candidate models...")
+
+    candidate_models = train_model(X_train, y_train)
+
+    # ----------------------------
+    # Evaluate candidates
+    # ----------------------------
+    logger.info("Evaluating candidate models...")
+
+    pipeline, experiment_report, metrics = evaluate_candidates(
+        candidate_models,
+        X_test,
+        y_test,
+    )
+
+    winner_name = experiment_report["winner"]
+
+    logger.info(f"Champion model selected: {winner_name}")
+
+    # ----------------------------
+    # Save artifacts
+    # ----------------------------
+    model_dir = (
+        Path(CONFIG["paths"]["experiments_dir"])
+        / f"churn_model_{MODEL_VERSION}"
+    )
+
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    model_path = model_dir / "model.pkl"
+
+    with open(model_path, "wb") as f:
+        pickle.dump(pipeline, f)
+
+    logger.info(f"Model saved at {model_path}")
+
+    # ----------------------------
+    # Save experiment report
+    # ----------------------------
+    report_path = model_dir / "experiment_report.json"
+
+    with open(report_path, "w") as f:
+        json.dump(experiment_report, f, indent=2)
+
+    logger.info("Experiment report saved.")
+
+    # ----------------------------
+    # Save metadata
+    # ----------------------------
+    metadata = {
+        "model_version": MODEL_VERSION,
+        "training_date": datetime.now().strftime("%Y-%m-%d"),
+        "model_type": winner_name,
+        "split_strategy": "time-aware (tenure-based)",
+        "feature_schema": feature_schema,
+        "feature_count": len(feature_schema),
+        "metrics": metrics,
+        "dataset": str(data_path),
     }
 
-    trained_models = {}
+    metadata_path = model_dir / "metadata.json"
 
-    for name, model in models.items():
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
 
-        logger.info(f"Training candidate model: {name}")
+    logger.info("Metadata saved.")
+    logger.info("===== Training Pipeline Completed =====")
 
-        pipeline = Pipeline(
-            steps=[
-                ("preprocessor", preprocessor),
-                ("model", model),
-            ]
-        )
 
-        pipeline.fit(X_train, y_train)
-
-        trained_models[name] = pipeline
-
-    logger.info(f"Candidate models trained: {list(trained_models.keys())}")
-
-    return trained_models
+if __name__ == "__main__":
+    main()
