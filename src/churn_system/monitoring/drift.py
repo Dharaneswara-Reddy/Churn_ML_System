@@ -8,9 +8,11 @@ PSI measures how much a feature's distribution has
 shifted between training and production data.
 """
 
-import pandas as pd
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
 from churn_system.config.config import CONFIG
 from churn_system.logging.logger import get_logger
 

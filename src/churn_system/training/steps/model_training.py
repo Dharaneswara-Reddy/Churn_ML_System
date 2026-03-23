@@ -1,11 +1,11 @@
-from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from churn_system.logging.logger import get_logger
 from churn_system.config.config import CONFIG
+from churn_system.logging.logger import get_logger
 
 logger = get_logger(__name__, CONFIG["logging"]["training"])
 
@@ -32,61 +32,41 @@ def get_model_registry():
     return {
         "logistic_regression": LogisticRegression(
             max_iter=1000,
-            class_weight="balanced"
+            class_weight="balanced",
         ),
         "random_forest": RandomForestClassifier(
             n_estimators=150,
             max_depth=8,
-            random_state=42
+            random_state=42,
         ),
         "gradient_boosting": GradientBoostingClassifier(
             n_estimators=120,
             learning_rate=0.08,
-            random_state=42
+            random_state=42,
         ),
     }
 
 
-def train_model(X_train, y_train, X_test, y_test):
+def train_candidate_models(X_train, y_train):
     """
-    Train multiple models and return the best performer.
+    Train all registered candidates and return name -> fitted Pipeline.
+
+    Each candidate gets its own preprocessor instance to avoid shared-state bugs
+    across sklearn Pipeline fits.
     """
+    registry = get_model_registry()
+    fitted: dict[str, Pipeline] = {}
 
-    preprocessor = build_preprocessor(X_train)
-    models = get_model_registry()
-
-    best_pipeline = None
-    best_metrics = None
-    best_score = -1
-    best_name = None
-
-    from churn_system.training.steps.model_evaluation import evaluate_model
-
-    for name, model in models.items():
-
+    for name, estimator in registry.items():
         logger.info(f"Training candidate model: {name}")
-
+        preprocessor = build_preprocessor(X_train)
         pipeline = Pipeline(
             steps=[
                 ("preprocessor", preprocessor),
-                ("model", model),
+                ("model", estimator),
             ]
         )
-
         pipeline.fit(X_train, y_train)
+        fitted[name] = pipeline
 
-        metrics, _ = evaluate_model(pipeline, X_test, y_test)
-
-        score = metrics["roc_auc"]
-
-        logger.info(f"{name} ROC-AUC = {score:.4f}")
-
-        if score > best_score:
-            best_score = score
-            best_pipeline = pipeline
-            best_metrics = metrics
-            best_name = name
-
-    logger.info(f"Champion selected: {best_name}")
-
-    return best_pipeline, best_metrics, best_name
+    return fitted

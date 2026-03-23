@@ -1,5 +1,5 @@
 from pathlib import Path
-import json
+
 from churn_system.inference.model_contract import get_feature_schema
 
 TARGET_COLUMN = "Churn Value"

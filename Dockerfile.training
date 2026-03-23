@@ -1,0 +1,16 @@
+# One-off or scheduled training — mount data/ and configure paths via env
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app/src
+
+COPY pyproject.toml README.md LICENSE ./
+COPY src ./src
+COPY scripts ./scripts
+
+RUN pip install --no-cache-dir .
+
+# Override with CHURN_RAW_DATA_PATH, CHURN_EXPERIMENTS_DIR, etc.
+CMD ["python", "-m", "churn_system.training.train"]

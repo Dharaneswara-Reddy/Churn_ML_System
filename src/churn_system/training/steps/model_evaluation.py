@@ -6,15 +6,15 @@ Evaluates all candidate models and selects the best one.
 
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
+    f1_score,
     precision_score,
     recall_score,
-    f1_score,
     roc_auc_score,
-    average_precision_score,
 )
 
-from churn_system.logging.logger import get_logger
 from churn_system.config.config import CONFIG
+from churn_system.logging.logger import get_logger
 
 logger = get_logger(__name__, CONFIG["logging"]["training"])
 
@@ -36,9 +36,11 @@ def evaluate_candidates(models, X_test, y_test):
 
         metrics = {
             "accuracy": float(accuracy_score(y_test, preds)),
-            "precision": float(precision_score(y_test, preds)),
-            "recall": float(recall_score(y_test, preds)),
-            "f1_score": float(f1_score(y_test, preds)),
+            "precision": float(
+                precision_score(y_test, preds, zero_division=0)
+            ),
+            "recall": float(recall_score(y_test, preds, zero_division=0)),
+            "f1_score": float(f1_score(y_test, preds, zero_division=0)),
             "roc_auc": float(roc_auc_score(y_test, probs)),
             "pr_auc": float(average_precision_score(y_test, probs)),
         }

@@ -132,6 +132,15 @@ Each stage is intentionally incomplete until the next failure exposes what needs
 
 ---
 
+## Ops quick reference (P0)
+
+- **Train:** `PYTHONPATH=src python -m churn_system.training.train` (optional env: `CHURN_RAW_DATA_PATH`, `CHURN_EXPERIMENTS_DIR`, `CHURN_TRAINING_REFERENCE_PATH`).
+- **API:** `PYTHONPATH=src uvicorn churn_system.api.api:app --reload` — optional `CHURN_API_KEY` (send `X-API-Key`), `CHURN_DISABLE_RATE_LIMIT=1` for tests.
+- **Tests / CI:** `pip install -e ".[dev]"` → `pytest tests/`, `ruff check src tests scripts`, `python -m build`.
+- **Docker:** `docker compose up api` (mount `./models` with `model.pkl` + `metadata.json`). Training: `docker compose --profile training run train`.
+
+---
+
 ## Closing Note
 
 The focus of this project is not to look impressive, but to be **honest**.

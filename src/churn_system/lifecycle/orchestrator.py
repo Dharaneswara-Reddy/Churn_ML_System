@@ -7,16 +7,14 @@ Runs monitoring pipeline and decides whether model retraining should be executed
 import json
 from pathlib import Path
 
-from requests import get
-
-from churn_system.lifecycle.model_compare import compare_models
-from churn_system.monitoring.model_health import evaluate_model_health
-from churn_system.training.train import main as train_model
-from churn_system.new_data.retraining_data import build_retraining_dataset
-from churn_system.lifecycle.promote import promote_model
-from churn_system.logging.logger import get_logger
-from churn_system.lifecycle.rollback import rollback_if_needed
 from churn_system.config.config import CONFIG
+from churn_system.lifecycle.model_compare import compare_models
+from churn_system.lifecycle.promote import promote_model
+from churn_system.lifecycle.rollback import rollback_if_needed
+from churn_system.logging.logger import get_logger
+from churn_system.monitoring.model_health import evaluate_model_health
+from churn_system.new_data.retraining_data import build_retraining_dataset
+from churn_system.training.train import main as train_model
 
 logger = get_logger(__name__,CONFIG["logging"]["lifecycle"])
 
@@ -68,7 +66,7 @@ def run_lifecycle():
 
     print("\n --- Evaluation is Completed ---")
 
-    
+
 
 if __name__ == "__main__":
     run_lifecycle()

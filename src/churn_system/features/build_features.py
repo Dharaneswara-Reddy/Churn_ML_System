@@ -7,7 +7,6 @@ Used by BOTH training and inference pipelines.
 
 import pandas as pd
 
-
 DROP_COLUMNS = [
     "CustomerID",
     "Count",

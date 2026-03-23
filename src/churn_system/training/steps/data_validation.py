@@ -6,11 +6,11 @@ Ensures dataset satisfies schema and training requirements.
 
 import pandas as pd
 
+from churn_system.config.config import CONFIG
+from churn_system.logging.logger import get_logger
 from churn_system.schema import (
     validate_training_data,
 )
-from churn_system.logging.logger import get_logger
-from churn_system.config.config import CONFIG
 
 logger = get_logger(__name__, CONFIG["logging"]["training"])
 

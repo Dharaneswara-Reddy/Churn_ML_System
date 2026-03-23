@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff
+        run: ruff check src tests scripts
+
+      - name: Pytest
+        run: pytest tests/
+
+      - name: Packaging
+        run: |
+          pip install build
+          python -m build
+
+      - name: Smoke training (synthetic CSV)
+        run: |
+          python scripts/generate_smoke_csv.py /tmp/smoke_churn.csv --rows 350
+          export CHURN_RAW_DATA_PATH=/tmp/smoke_churn.csv
+          export CHURN_EXPERIMENTS_DIR=/tmp/churn_experiments_ci
+          export CHURN_TRAINING_REFERENCE_PATH=/tmp/churn_training_ref_ci.csv
+          export PYTHONPATH=src
+          python -m churn_system.training.train

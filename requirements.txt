@@ -1,3 +1,4 @@
+# Prefer: pip install -e ".[dev]"
 numpy
 pandas
 scikit-learn
@@ -5,3 +6,5 @@ fastapi
 uvicorn
 requests
 pyyaml
+pydantic>=2
+slowapi

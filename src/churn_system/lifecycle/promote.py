@@ -1,10 +1,10 @@
-import shutil
 import json
+import shutil
 from pathlib import Path
 
-from churn_system.logging.logger import get_logger
 from churn_system.config.config import CONFIG
 from churn_system.lifecycle.lineage import record_lineage
+from churn_system.logging.logger import get_logger
 
 logger = get_logger(__name__, CONFIG["logging"]["lifecycle"])
 

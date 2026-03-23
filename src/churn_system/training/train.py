@@ -7,21 +7,22 @@ Data → Validation → Feature Engineering → Training → Evaluation → Arti
 
 import json
 import pickle
-import numpy as np
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
+
+from churn_system.config.config import CONFIG
 from churn_system.logging.logger import get_logger
 from churn_system.schema import TARGET_COLUMN
-from churn_system.config.config import CONFIG
+from churn_system.training.feature_types import infer_feature_types
 
 # Pipeline steps
 from churn_system.training.steps.data_ingestion import load_training_data
 from churn_system.training.steps.data_validation import run_data_validation
 from churn_system.training.steps.feature_engineering import run_feature_engineering
-from churn_system.training.steps.model_training import train_model
 from churn_system.training.steps.model_evaluation import evaluate_candidates
-
+from churn_system.training.steps.model_training import train_candidate_models
 
 MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
 logger = get_logger(__name__, CONFIG["logging"]["training"])
@@ -86,6 +87,7 @@ def main():
     X_test = run_feature_engineering(test_df)
 
     feature_schema = list(X_train.columns)
+    feature_types = infer_feature_types(X_train)
 
     logger.info(f"Feature schema captured ({len(feature_schema)} features)")
 
@@ -135,7 +137,7 @@ def main():
     # ----------------------------
     logger.info("Training candidate models...")
 
-    candidate_models = train_model(X_train, y_train)
+    candidate_models = train_candidate_models(X_train, y_train)
 
     # ----------------------------
     # Evaluate candidates
@@ -188,6 +190,7 @@ def main():
         "model_type": winner_name,
         "split_strategy": "time-aware (tenure-based)",
         "feature_schema": feature_schema,
+        "feature_types": feature_types,
         "feature_count": len(feature_schema),
         "metrics": metrics,
         "dataset": str(data_path),
