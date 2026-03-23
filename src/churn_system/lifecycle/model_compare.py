@@ -9,10 +9,9 @@ and feature schema compatibility checks.
 import json
 from pathlib import Path
 
-from churn_system.logging.logger import get_logger
 from churn_system.config.config import CONFIG
 from churn_system.lifecycle.schema_compare import compare_feature_schemas
-
+from churn_system.logging.logger import get_logger
 
 PRODUCTION_MODEL = Path("models/production/current/metadata.json")
 EXPERIMENTS_DIR = Path("models/experiments")

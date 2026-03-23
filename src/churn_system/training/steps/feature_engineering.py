@@ -6,9 +6,9 @@ Builds model-ready features using shared feature builder.
 
 import pandas as pd
 
+from churn_system.config.config import CONFIG
 from churn_system.features.build_features import build_features
 from churn_system.logging.logger import get_logger
-from churn_system.config.config import CONFIG
 
 logger = get_logger(__name__, CONFIG["logging"]["training"])
 

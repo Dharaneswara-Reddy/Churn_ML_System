@@ -11,7 +11,6 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 

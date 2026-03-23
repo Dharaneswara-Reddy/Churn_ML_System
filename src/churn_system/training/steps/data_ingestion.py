@@ -4,11 +4,12 @@ Data Ingestion Step
 Responsible for loading training dataset from configured source.
 """
 
-import pandas as pd
 from pathlib import Path
 
-from churn_system.logging.logger import get_logger
+import pandas as pd
+
 from churn_system.config.config import CONFIG
+from churn_system.logging.logger import get_logger
 
 logger = get_logger(__name__, CONFIG["logging"]["training"])
 

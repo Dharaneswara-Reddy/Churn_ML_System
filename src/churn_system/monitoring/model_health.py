@@ -7,12 +7,13 @@ model retraining should be triggered.
 
 import json
 from pathlib import Path
-from churn_system.monitoring.drift import calculate_psi
+
+import numpy as np
+import pandas as pd
+
 from churn_system.config.config import CONFIG
 from churn_system.logging.logger import get_logger
-
-import pandas as pd
-import numpy as np
+from churn_system.monitoring.drift import calculate_psi
 
 logger = get_logger(__name__,CONFIG["logging"]["monitoring"])
 
@@ -47,7 +48,7 @@ def evaluate_model_health():
     for col in numeric_cols:
 
         if col not in prod_df.columns:
-            continue   
+            continue
 
         psi = calculate_psi(
             train_df[col].dropna(),

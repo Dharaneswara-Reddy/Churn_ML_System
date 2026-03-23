@@ -8,6 +8,10 @@ paths:
 inference:
   threshold: 0.5
 
+api:
+  # slowapi format, e.g. "60/minute", "100/hour"
+  rate_limit: "120/minute"
+
 logging:
   api: "api.log"
   training: "training.log"

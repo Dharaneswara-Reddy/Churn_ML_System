@@ -1,0 +1,27 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      CHURN_API_KEY: ${CHURN_API_KEY:-}
+      CHURN_DISABLE_RATE_LIMIT: ${CHURN_DISABLE_RATE_LIMIT:-}
+    volumes:
+      - ./models:/app/models:ro
+      - ./data:/app/data
+
+  train:
+    build:
+      context: .
+      dockerfile: Dockerfile.training
+    profiles:
+      - training
+    environment:
+      CHURN_RAW_DATA_PATH: ${CHURN_RAW_DATA_PATH:-data/Telco_customer_churn_raw.csv}
+      CHURN_EXPERIMENTS_DIR: ${CHURN_EXPERIMENTS_DIR:-models/experiments}
+      CHURN_TRAINING_REFERENCE_PATH: ${CHURN_TRAINING_REFERENCE_PATH:-data/training_reference.csv}
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
