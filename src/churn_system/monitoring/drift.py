@@ -20,7 +20,7 @@ logger = get_logger(__name__,CONFIG["logging"]["monitoring"])
 
 
 TRAIN_PATH = Path("data/training_reference.csv")
-PROD_PATH = Path("data/inference_logs/predictions.csv")
+PROD_PATH = Path("data/inference_logs/predictions.csv")  # legacy; DB is preferred
 
 
 PSI_THRESHOLD = 0.2
@@ -77,12 +77,22 @@ def detect_drift() -> None:
     report feature-level drift.
     """
 
-    if not TRAIN_PATH.exists() or not PROD_PATH.exists():
-        print(" Missing training or production data.")
+    if not TRAIN_PATH.exists():
+        print(" Missing training reference data.")
         return
 
+    from churn_system.monitoring.prediction_reader import load_predictions_df
+
     train_df = pd.read_csv(TRAIN_PATH)
-    prod_df = pd.read_csv(PROD_PATH)
+    prod_df = load_predictions_df()
+
+    if prod_df.empty:
+        # fallback to legacy CSV if it exists
+        if PROD_PATH.exists():
+            prod_df = pd.read_csv(PROD_PATH)
+        else:
+            print(" Missing production prediction events.")
+            return
 
     numeric_cols = train_df.select_dtypes(include=np.number).columns
 

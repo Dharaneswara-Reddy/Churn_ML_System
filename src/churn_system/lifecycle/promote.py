@@ -68,6 +68,29 @@ def promote_model(version: str):
 
     logger.info(f"Model {version} promoted to production.")
 
+    # P1: If this experiment was logged to MLflow Model Registry, promote its stage too.
+    try:
+        mlflow_uri = new_metadata.get("mlflow_model_uri")
+        if (
+            mlflow_uri
+            and isinstance(mlflow_uri, str)
+            and mlflow_uri.startswith("models:/")
+        ):
+            import mlflow
+
+            client = mlflow.tracking.MlflowClient()
+            _, rest = mlflow_uri.split("models:/", 1)
+            name, ver = rest.split("/", 1)
+            client.transition_model_version_stage(
+                name=name,
+                version=ver,
+                stage="Production",
+                archive_existing_versions=True,
+            )
+            logger.info("MLflow registry promoted to Production stage.")
+    except Exception:
+        logger.exception("MLflow stage promotion failed (non-blocking)")
+
     record_lineage(
         model_version=version,
         metrics=new_metadata.get("metrics", {}),

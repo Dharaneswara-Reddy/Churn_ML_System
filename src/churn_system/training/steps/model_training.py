@@ -1,3 +1,4 @@
+import numpy as np
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -11,8 +12,10 @@ logger = get_logger(__name__, CONFIG["logging"]["training"])
 
 
 def build_preprocessor(X):
-    categorical_cols = X.select_dtypes(include=["object"]).columns
-    numerical_cols = X.select_dtypes(exclude=["object"]).columns
+    # Handle both legacy object dtype and pandas StringDtype ("string")
+    # to avoid categorical values leaking into numeric scaler paths.
+    categorical_cols = X.select_dtypes(include=["object", "string", "category"]).columns
+    numerical_cols = X.select_dtypes(include=[np.number, "bool"]).columns
 
     preprocessor = ColumnTransformer(
         transformers=[

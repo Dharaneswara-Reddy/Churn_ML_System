@@ -1,62 +1,27 @@
-from datetime import datetime, timezone
-from pathlib import Path
+"""
+Prediction storage adapter.
 
-import pandas as pd
+P1: durable storage in DB outbox (replaces CSV append).
+"""
 
-from churn_system.config.config import CONFIG
-from churn_system.logging.logger import get_logger
+from __future__ import annotations
 
-logger = get_logger(__name__, CONFIG["logging"]["monitoring"])
+from typing import Any
 
-LOG_PATH = Path("data/inference_logs/predictions.csv")
-LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-# Do not persist raw identifiers / location fields suitable for minimization.
-_SENSITIVE_KEYS = frozenset(
-    {
-        "CustomerID",
-        "Country",
-        "State",
-        "City",
-        "Zip Code",
-        "Lat Long",
-        "Latitude",
-        "Longitude",
-    }
-)
-
-
-def _redact_record(record: dict) -> dict:
-    return {k: v for k, v in record.items() if k not in _SENSITIVE_KEYS}
+from churn_system.events.predictions import store_prediction_event
 
 
 def store_prediction(
-    input_record: dict,
+    input_record: dict[str, Any],
     probability: float,
     prediction: int,
     *,
     request_id: str,
 ) -> None:
-    """
-    Persist a minimal, redacted row for monitoring (no raw PII / location).
-    """
-
-    record = _redact_record(input_record.copy())
-    record["request_id"] = request_id
-    record["prediction_probability"] = float(probability)
-    record["prediction"] = int(prediction)
-    record["timestamp"] = datetime.now(timezone.utc).isoformat()
-
-    df = pd.DataFrame([record])
-    df = df.reindex(sorted(df.columns), axis=1)
-
-    write_header = not LOG_PATH.exists()
-
-    df.to_csv(
-        LOG_PATH,
-        mode="a",
-        header=write_header,
-        index=False,
+    store_prediction_event(
+        request_id=request_id,
+        raw_features=input_record,
+        probability=probability,
+        prediction=prediction,
+        latency_seconds=0.0,
     )
-
-    logger.info("Prediction stored | request_id=%s", request_id)

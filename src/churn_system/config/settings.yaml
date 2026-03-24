@@ -12,6 +12,16 @@ api:
   # slowapi format, e.g. "60/minute", "100/hour"
   rate_limit: "120/minute"
 
+mlflow:
+  # Prefer DB-backed tracking/registry (filesystem stores deprecated in MLflow 2026)
+  tracking_uri: "sqlite:///./mlruns/mlflow.db"
+  experiment_name: "churn_training"
+  registered_model_name: "churn_model"
+
+event_store:
+  # sqlite URL; swap for Postgres in production (e.g. postgresql+psycopg://...)
+  database_url: "sqlite:///./data/churn_events.db"
+
 logging:
   api: "api.log"
   training: "training.log"

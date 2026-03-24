@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import ConfigDict, Field, create_model
 
 from churn_system.config.config import CONFIG
 from churn_system.training.feature_types import infer_feature_types
@@ -86,8 +86,7 @@ def generate_request_model():
 
     RequestModel = create_model(
         "DynamicPredictionRequest",
-        __base__=BaseModel,
-        model_config=ConfigDict(extra="forbid"),
+        __config__=ConfigDict(extra="forbid"),
         **fields,
     )
 
