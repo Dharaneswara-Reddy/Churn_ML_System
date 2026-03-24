@@ -1,0 +1,29 @@
+{
+  "candidates": {
+    "logistic_regression": {
+      "accuracy": 0.9176721078779276,
+      "precision": 0.23255813953488372,
+      "recall": 0.10752688172043011,
+      "f1_score": 0.14705882352941177,
+      "roc_auc": 0.8093930777527208,
+      "pr_auc": 0.20868513215503487
+    },
+    "random_forest": {
+      "accuracy": 0.9339957416607523,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1_score": 0.0,
+      "roc_auc": 0.8234181455698272,
+      "pr_auc": 0.2509497742621157
+    },
+    "gradient_boosting": {
+      "accuracy": 0.9325762952448545,
+      "precision": 0.45,
+      "recall": 0.0967741935483871,
+      "f1_score": 0.1592920353982301,
+      "roc_auc": 0.8481918161911299,
+      "pr_auc": 0.27976768228368887
+    }
+  },
+  "winner": "gradient_boosting"
+}

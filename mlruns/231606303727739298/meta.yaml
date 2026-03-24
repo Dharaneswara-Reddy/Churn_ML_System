@@ -1,0 +1,7 @@
+artifact_location: file:///home/toji339/Documents/Churn_Ml_System/mlruns/231606303727739298
+creation_time: 1774283896847
+experiment_id: '231606303727739298'
+last_update_time: 1774283896847
+lifecycle_stage: active
+name: churn_training
+workspace: default

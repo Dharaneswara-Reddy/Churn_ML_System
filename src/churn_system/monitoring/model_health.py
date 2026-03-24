@@ -14,6 +14,7 @@ import pandas as pd
 from churn_system.config.config import CONFIG
 from churn_system.logging.logger import get_logger
 from churn_system.monitoring.drift import calculate_psi
+from churn_system.observability.metrics import DRIFTING_FEATURES, RETRAINING_RECOMMENDED
 
 logger = get_logger(__name__,CONFIG["logging"]["monitoring"])
 
@@ -34,12 +35,22 @@ def evaluate_model_health():
     Evaluate model stability using PSI drift metrics.
     """
 
-    if not TRAIN_PATH.exists() or not PROD_PATH.exists():
-        print("Missing data for health evaluation.")
+    if not TRAIN_PATH.exists():
+        print("Missing training reference for health evaluation.")
         return
 
+    from churn_system.monitoring.prediction_reader import load_predictions_df
+
     train_df = pd.read_csv(TRAIN_PATH)
-    prod_df = pd.read_csv(PROD_PATH)
+    prod_df = load_predictions_df()
+
+    if prod_df.empty:
+        # fallback to legacy CSV if it exists
+        if PROD_PATH.exists():
+            prod_df = pd.read_csv(PROD_PATH)
+        else:
+            print("Missing production prediction events.")
+            return
 
     numeric_cols = train_df.select_dtypes(include=np.number).columns
 
@@ -62,6 +73,8 @@ def evaluate_model_health():
             })
 
     retrain_required = len(drifting_features) >= DRIFT_FEATURE_LIMIT
+    DRIFTING_FEATURES.set(len(drifting_features))
+    RETRAINING_RECOMMENDED.set(1 if retrain_required else 0)
 
     report = {
         "drifting_feature_count": len(drifting_features),

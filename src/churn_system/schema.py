@@ -71,9 +71,10 @@ def validate_inference_data(df):
     (not raw dataset schema).
     """
 
-    required_features = set(get_feature_schema())
+    required_features = list(get_feature_schema())
+    required_feature_set = set(required_features)
 
-    missing = required_features - set(df.columns)
+    missing = required_feature_set - set(df.columns)
     if missing:
         raise ValueError(
             f"Missing required model features at inference: {missing}"
@@ -84,4 +85,5 @@ def validate_inference_data(df):
             f"Target column '{TARGET_COLUMN}' must not appear at inference"
         )
 
-    return df[list(required_features)]
+    # Preserve training-time feature order from model metadata.
+    return df[required_features]

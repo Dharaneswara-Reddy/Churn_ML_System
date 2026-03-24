@@ -1,0 +1,10 @@
+artifact_location: file:///home/toji339/Documents/Churn_Ml_System/mlruns/231606303727739298/models/m-a7f333a01d4d4b25953c829cb33d61fa/artifacts
+creation_timestamp: 1774283897719
+experiment_id: '231606303727739298'
+last_updated_timestamp: 1774283900941
+model_id: m-a7f333a01d4d4b25953c829cb33d61fa
+model_type: null
+name: model
+source_run_id: 132226f10aaa44fdae9eb163972cf117
+status: 2
+status_message: null

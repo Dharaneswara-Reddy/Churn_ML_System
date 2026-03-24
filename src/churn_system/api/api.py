@@ -19,7 +19,7 @@ from pathlib import Path
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -27,9 +27,15 @@ from slowapi.util import get_remote_address
 from churn_system.api.errors import ErrorBody
 from churn_system.api.schema_generator import generate_request_model
 from churn_system.config.config import CONFIG, load_config
+from churn_system.events.predictions import store_prediction_event
 from churn_system.features.build_features import build_features
 from churn_system.logging.logger import get_logger
-from churn_system.monitoring.prediction_store import store_prediction
+from churn_system.observability.metrics import (
+    INFERENCE_ERRORS_TOTAL,
+    REQUEST_LATENCY_SECONDS,
+    REQUESTS_TOTAL,
+    render_latest,
+)
 from churn_system.schema import validate_inference_data
 
 logger = get_logger(__name__, CONFIG["logging"]["api"])
@@ -105,6 +111,11 @@ def health_check():
 def health():
     return {"status": "ok"}
 
+@app.get("/metrics")
+def metrics():
+    body, content_type = render_latest()
+    return Response(content=body, media_type=content_type)
+
 
 @app.post("/predict")
 @limiter.limit(_rate_limit())
@@ -127,6 +138,7 @@ def predict(
         df_valid = validate_inference_data(df)
     except ValueError as e:
         logger.warning("Validation failed | request_id=%s | %s", request_id, e)
+        REQUESTS_TOTAL.labels(path="/predict", method="POST", status="400").inc()
         raise HTTPException(
             status_code=400,
             detail=ErrorBody(
@@ -137,6 +149,7 @@ def predict(
         ) from e
     except Exception as e:
         logger.exception("Unexpected validation error | request_id=%s", request_id)
+        REQUESTS_TOTAL.labels(path="/predict", method="POST", status="400").inc()
         raise HTTPException(
             status_code=400,
             detail=ErrorBody(
@@ -149,9 +162,18 @@ def predict(
     try:
         prob = float(get_model().predict_proba(df_valid)[:, 1][0])
         prediction = int(prob >= THRESHOLD)
-        store_prediction(row, prob, prediction, request_id=request_id)
+        latency = time.time() - start_time
+        store_prediction_event(
+            request_id=request_id,
+            raw_features=row,
+            probability=prob,
+            prediction=prediction,
+            latency_seconds=latency,
+        )
     except Exception as e:
         logger.exception("Prediction failed | request_id=%s", request_id)
+        INFERENCE_ERRORS_TOTAL.inc()
+        REQUESTS_TOTAL.labels(path="/predict", method="POST", status="500").inc()
         raise HTTPException(
             status_code=500,
             detail=ErrorBody(
@@ -162,6 +184,8 @@ def predict(
         ) from e
 
     latency = time.time() - start_time
+    REQUEST_LATENCY_SECONDS.labels(path="/predict", method="POST").observe(latency)
+    REQUESTS_TOTAL.labels(path="/predict", method="POST", status="200").inc()
     logger.info(
         "Prediction | request_id=%s | prob=%.4f | pred=%s | latency=%.4fs",
         request_id,

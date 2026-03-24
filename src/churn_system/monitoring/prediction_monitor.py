@@ -1,22 +1,19 @@
 """
 Prediction Monitoring Module
 
-Analyzes live inference predictions 
-to understand model behaviour in production 
+Analyzes live inference predictions to understand model behaviour in production.
 """
 
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pandas as pd
-
 from churn_system.config.config import CONFIG
 from churn_system.logging.logger import get_logger
+from churn_system.monitoring.prediction_reader import load_predictions_df
 
 logger = get_logger(__name__, CONFIG["logging"]["monitoring"])
 
-PRED_PATH = Path("data/inference_logs/predictions.csv")
 REPORT_DIR = Path("models/monitoring")
 REPORT_DIR.mkdir(parents = True, exist_ok=True)
 
@@ -27,15 +24,10 @@ def generate_prediction_report():
     """
     Analyze production predictions and generate monitoring metrics.
     """
-
-    if not PRED_PATH.exists():
-        logger.warning("No prediction logs found.")
-        return
-
-    df = pd.read_csv(PRED_PATH)
+    df = load_predictions_df()
 
     if df.empty:
-        logger.warning("Prediction file empty.")
+        logger.warning("No predictions found.")
         return
 
     if "prediction_probability" not in df.columns:

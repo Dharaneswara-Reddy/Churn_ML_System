@@ -1,0 +1,16 @@
+creation_timestamp: 1774283900956
+current_stage: None
+deployment_job_state: null
+description: null
+last_updated_timestamp: 1774283900956
+model_id: m-a7f333a01d4d4b25953c829cb33d61fa
+name: churn_model
+run_id: 132226f10aaa44fdae9eb163972cf117
+run_link: null
+source: models:/m-a7f333a01d4d4b25953c829cb33d61fa
+status: READY
+status_message: null
+storage_location: file:///home/toji339/Documents/Churn_Ml_System/mlruns/231606303727739298/models/m-a7f333a01d4d4b25953c829cb33d61fa/artifacts
+user_id: null
+version: 1
+workspace: default

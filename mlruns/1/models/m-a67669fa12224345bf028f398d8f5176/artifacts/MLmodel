@@ -1,0 +1,23 @@
+artifact_path: /home/toji339/Documents/Churn_Ml_System/mlruns/1/models/m-a67669fa12224345bf028f398d8f5176/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.13.9
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.8.0
+    skops_trusted_types: null
+mlflow_version: 3.10.1
+model_id: m-a67669fa12224345bf028f398d8f5176
+model_size_bytes: 744585
+model_uuid: m-a67669fa12224345bf028f398d8f5176
+prompts: null
+run_id: 8e98afa905aa4d6e91f3ddbd88d0e3a3
+utc_time_created: '2026-03-24 03:56:28.357919'

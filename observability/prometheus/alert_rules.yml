@@ -1,0 +1,38 @@
+groups:
+  - name: churn_api_alerts
+    rules:
+      - alert: ChurnApiHighErrorRate
+        expr: |
+          sum(rate(churn_api_requests_total{path="/predict",status="500"}[5m]))
+          /
+          sum(rate(churn_api_requests_total{path="/predict"}[5m]))
+          > 0.02
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "Churn API high error rate"
+          description: "5xx error rate > 2% for 10m"
+
+      - alert: ChurnApiHighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(churn_api_request_latency_seconds_bucket{path="/predict"}[5m])) by (le)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "Churn API high latency (p95)"
+          description: "p95 latency > 0.5s for 10m"
+
+      - alert: ChurnModelDriftDetected
+        expr: churn_drifting_feature_count >= 2
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Model drift detected"
+          description: ">=2 drifting features detected for 30m"
+

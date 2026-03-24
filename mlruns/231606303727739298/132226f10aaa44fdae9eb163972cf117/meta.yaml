@@ -1,0 +1,14 @@
+artifact_uri: file:///home/toji339/Documents/Churn_Ml_System/mlruns/231606303727739298/132226f10aaa44fdae9eb163972cf117/artifacts
+end_time: 1774283900963
+entry_point_name: ''
+experiment_id: '231606303727739298'
+lifecycle_stage: active
+run_id: 132226f10aaa44fdae9eb163972cf117
+run_name: churn_model_20260323_220816
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1774283897710
+status: 3
+tags: []
+user_id: toji339

@@ -1,0 +1,43 @@
+version: 1
+dataset: telco_churn
+
+# Minimal schema contract for raw training rows.
+# Pandera enforcement code lives in churn_system.validation.validator.
+columns:
+  CustomerID: {type: str, required: true}
+  Count: {type: int, required: true}
+  Country: {type: str, required: true}
+  State: {type: str, required: true}
+  City: {type: str, required: true}
+  Zip Code: {type: str, required: true}
+  Lat Long: {type: str, required: true}
+  Latitude: {type: float, required: true}
+  Longitude: {type: float, required: true}
+  Gender: {type: str, required: true}
+  Senior Citizen: {type: str, required: true}
+  Partner: {type: str, required: true}
+  Dependents: {type: str, required: true}
+  Tenure Months: {type: int, required: true}
+  Phone Service: {type: str, required: true}
+  Multiple Lines: {type: str, required: true}
+  Internet Service: {type: str, required: true}
+  Online Security: {type: str, required: true}
+  Online Backup: {type: str, required: true}
+  Device Protection: {type: str, required: true}
+  Tech Support: {type: str, required: true}
+  Streaming TV: {type: str, required: true}
+  Streaming Movies: {type: str, required: true}
+  Contract: {type: str, required: true}
+  Paperless Billing: {type: str, required: true}
+  Payment Method: {type: str, required: true}
+  Monthly Charges: {type: float, required: true}
+  Total Charges: {type: float, required: true}
+  Churn Label: {type: str, required: true}
+  Churn Value: {type: int, required: true}
+  Churn Score: {type: int, required: true}
+  CLTV: {type: int, required: true}
+  Churn Reason: {type: str, required: true, nullable: true}
+
+checks:
+  Churn Value:
+    allowed: [0, 1]
