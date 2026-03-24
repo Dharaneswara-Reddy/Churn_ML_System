@@ -23,6 +23,8 @@ jobs:
         run: ruff check src tests scripts
 
       - name: Pytest
+        env:
+          CHURN_MLFLOW_ENABLED: "0"
         run: pytest tests/
 
       - name: Packaging
@@ -36,5 +38,6 @@ jobs:
           export CHURN_RAW_DATA_PATH=/tmp/smoke_churn.csv
           export CHURN_EXPERIMENTS_DIR=/tmp/churn_experiments_ci
           export CHURN_TRAINING_REFERENCE_PATH=/tmp/churn_training_ref_ci.csv
+          export CHURN_MLFLOW_ENABLED=0
           export PYTHONPATH=src
           python -m churn_system.training.train

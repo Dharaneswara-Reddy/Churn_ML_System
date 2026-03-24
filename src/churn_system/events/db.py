@@ -7,6 +7,7 @@ This replaces CSV append logging for inference events.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import JSON, DateTime, Float, Integer, MetaData, String, create_engine
@@ -59,6 +60,14 @@ class OutboxEvent(Base):
 
 
 def init_db() -> None:
+    # Ensure SQLite file parent exists (CI and fresh environments)
+    if ENGINE.url.get_backend_name() == "sqlite":
+        db_file = ENGINE.url.database
+        if db_file and db_file not in {":memory:", ""}:
+            db_path = Path(db_file)
+            if not db_path.is_absolute():
+                db_path = Path.cwd() / db_path
+            db_path.parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=ENGINE)
 
 

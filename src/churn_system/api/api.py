@@ -201,3 +201,11 @@ def predict(
         "threshold": THRESHOLD,
         "latency_seconds": round(latency, 4),
     }
+
+
+@app.get("/predict")
+def predict_get_help():
+    return {
+        "message": "Use POST /predict with JSON body.",
+        "hint": "Open /docs for the interactive request form.",
+    }

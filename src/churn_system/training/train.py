@@ -208,40 +208,43 @@ def main():
     # ----------------------------
     # MLflow tracking + registry
     # ----------------------------
-    import mlflow
+    if mlflow_cfg.get("enabled", True):
+        import mlflow
 
-    with mlflow.start_run(run_name=f"churn_model_{MODEL_VERSION}"):
-        mlflow.log_params(
-            {
-                "model_type": winner_name,
-                "split_strategy": "time-aware (tenure-based)",
-                "feature_count": len(feature_schema),
-            }
-        )
-        mlflow.log_metrics(metrics)
-        mlflow.set_tag("model_version", MODEL_VERSION)
-        mlflow.set_tag("dataset_path", str(data_path))
+        with mlflow.start_run(run_name=f"churn_model_{MODEL_VERSION}"):
+            mlflow.log_params(
+                {
+                    "model_type": winner_name,
+                    "split_strategy": "time-aware (tenure-based)",
+                    "feature_count": len(feature_schema),
+                }
+            )
+            mlflow.log_metrics(metrics)
+            mlflow.set_tag("model_version", MODEL_VERSION)
+            mlflow.set_tag("dataset_path", str(data_path))
 
-        model_uri = log_sklearn_model(
-            pipeline=pipeline,
-            registered_model_name=mlflow_cfg["registered_model_name"],
-            tags={"winner": winner_name},
-        )
-        mlflow.set_tag("mlflow_model_uri", model_uri)
+            model_uri = log_sklearn_model(
+                pipeline=pipeline,
+                registered_model_name=mlflow_cfg["registered_model_name"],
+                tags={"winner": winner_name},
+            )
+            mlflow.set_tag("mlflow_model_uri", model_uri)
 
-        log_artifact(report_path)
-        log_artifact(metadata_path)
+            log_artifact(report_path)
+            log_artifact(metadata_path)
 
-        # Persist MLflow pointers into your metadata.json for downstream promotion
-        try:
-            run_id = mlflow.active_run().info.run_id  # type: ignore[union-attr]
-            metadata_update = dict(metadata)
-            metadata_update["mlflow_run_id"] = run_id
-            metadata_update["mlflow_model_uri"] = model_uri
-            with open(metadata_path, "w") as f:
-                json.dump(metadata_update, f, indent=2)
-        except Exception:
-            logger.exception("Failed to update metadata with MLflow run info")
+            # Persist MLflow pointers into your metadata.json for downstream promotion
+            try:
+                run_id = mlflow.active_run().info.run_id  # type: ignore[union-attr]
+                metadata_update = dict(metadata)
+                metadata_update["mlflow_run_id"] = run_id
+                metadata_update["mlflow_model_uri"] = model_uri
+                with open(metadata_path, "w") as f:
+                    json.dump(metadata_update, f, indent=2)
+            except Exception:
+                logger.exception("Failed to update metadata with MLflow run info")
+    else:
+        logger.info("MLflow disabled by CHURN_MLFLOW_ENABLED")
 
     logger.info("===== Training Pipeline Completed =====")
 

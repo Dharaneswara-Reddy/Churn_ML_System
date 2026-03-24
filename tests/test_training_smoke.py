@@ -29,6 +29,7 @@ def test_training_pipeline_main_smoke(tmp_path, monkeypatch):
     monkeypatch.setitem(cfg.CONFIG["paths"], "raw_data", str(csv_path))
     monkeypatch.setitem(cfg.CONFIG["paths"], "experiments_dir", str(exp_dir))
     monkeypatch.setitem(cfg.CONFIG["paths"], "training_reference", str(ref_path))
+    monkeypatch.setenv("CHURN_MLFLOW_ENABLED", "0")
 
     from churn_system.training.train import main
 
