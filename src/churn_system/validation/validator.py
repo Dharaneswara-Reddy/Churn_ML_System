@@ -29,12 +29,6 @@ def build_pandera_schema(schema_dict: dict[str, Any]) -> DataFrameSchema:
         nullable = bool(spec.get("nullable", False))
         columns[name] = Column(t, required=required, nullable=nullable)
 
-    checks = []
-    for col, c in (schema_dict.get("checks") or {}).items():
-        if "allowed" in c:
-            allowed = set(c["allowed"])
-            checks.append(Check.isin(allowed),)
-
     # Column-specific checks
     col_checks = {}
     for col, c in (schema_dict.get("checks") or {}).items():
