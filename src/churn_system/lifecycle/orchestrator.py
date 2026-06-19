@@ -19,7 +19,7 @@ from churn_system.training.train import main as train_model
 logger = get_logger(__name__,CONFIG["logging"]["lifecycle"])
 
 
-HEALTH_FILE = Path("models/monitoring/health_report.json")
+HEALTH_FILE = Path(CONFIG["paths"]["monitoring_dir"]) / "health_report.json"
 
 def run_lifecycle():
     """
@@ -52,7 +52,7 @@ def run_lifecycle():
             print("Challenger wins - promoting model.")
 
             latest_version = sorted(
-                Path("models/experiments").glob("churn_model_*")
+                Path(CONFIG["paths"]["experiments_dir"]).glob("churn_model_*")
             )[-1].name
 
             promote_model(latest_version)

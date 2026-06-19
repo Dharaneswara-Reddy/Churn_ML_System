@@ -1,0 +1,62 @@
+digraph LifecycleFlow {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11, style="filled,rounded", shape=box];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+    bgcolor="white";
+    label="Lifecycle Orchestration — Automated Model Management";
+    labelloc=t;
+    fontsize=15;
+    fontcolor="#1a1a2e";
+
+    scheduler [label="Scheduler\n(periodic timer)\nevery N seconds", fillcolor="#85c1e9", fontcolor="#1a1a2e"];
+    orch [label="Orchestrator\nrun_lifecycle()", fillcolor="#5dade2", fontcolor="white"];
+
+    health_eval [label="Evaluate Model Health\n(PSI drift per feature)", fillcolor="#f5b7b1", fontcolor="#1a1a2e"];
+
+    decision [label="Drift ≥ 2 features?", fillcolor="#fad7a0", fontcolor="#1a1a2e", shape=diamond];
+
+    build_data [label="Build Retraining\nDataset\n(original + prod logs)", fillcolor="#f9e79f", fontcolor="#1a1a2e"];
+
+    retrain [label="Retrain Model\ntrain.py:main()\n(full pipeline)", fillcolor="#e8daef", fontcolor="#1a1a2e"];
+
+    compare [label="Champion vs\nChallenger\ncompare_models()", fillcolor="#d2b4de", fontcolor="#1a1a2e"];
+
+    schema_check [label="Schema\nCompatible?", fillcolor="#f5cba7", fontcolor="#1a1a2e", shape=diamond];
+
+    better [label="Challenger\nBeats Champion?", fillcolor="#fad7a0", fontcolor="#1a1a2e", shape=diamond];
+
+    promote [label="Promote Model\n• copy to production\n• MLflow stage update\n• record lineage", fillcolor="#82e0aa", fontcolor="#1a1a2e"];
+
+    reject [label="Keep Current\nChampion Model", fillcolor="#d5d8dc", fontcolor="#1a1a2e"];
+
+    rollback [label="Rollback Check\n(if health still bad,\nrevert to N-1 model)", fillcolor="#f1948a", fontcolor="white"];
+
+    lineage [label="Lineage Log\n(append-only\nJSON history)", fillcolor="#aed6f1", fontcolor="#1a1a2e"];
+
+    healthy [label="Model Healthy\nNo Action Needed", fillcolor="#a9dfbf", fontcolor="#1a1a2e"];
+
+    done [label="Cycle Complete", shape=oval, fillcolor="#2ecc71", fontcolor="white"];
+
+    scheduler -> orch;
+    orch -> health_eval;
+    health_eval -> decision;
+
+    decision -> build_data [label="YES\n(drift detected)"];
+    decision -> healthy [label="NO"];
+
+    build_data -> retrain -> compare;
+    compare -> schema_check;
+
+    schema_check -> better [label="compatible"];
+    schema_check -> reject [label="breaking\nchange"];
+
+    better -> promote [label="YES"];
+    better -> reject [label="NO"];
+
+    promote -> lineage;
+    reject -> rollback;
+    healthy -> rollback;
+    rollback -> done;
+    promote -> done;
+}

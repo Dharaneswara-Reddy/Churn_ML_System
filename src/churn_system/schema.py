@@ -1,12 +1,10 @@
-from pathlib import Path
+"""Schema contracts for training data and inference validation."""
 
 from churn_system.inference.model_contract import get_feature_schema
 
 TARGET_COLUMN = "Churn Value"
 
 ALLOWED_TARGET_VALUES = {0, 1}
-
-
 
 REQUIRED_COLUMNS = {
     "CustomerID",
@@ -54,15 +52,6 @@ def validate_training_data(df):
         raise ValueError(
             f"Invalid target values found: {df[TARGET_COLUMN].unique()}"
         )
-
-
-
-PRODUCTION_METADATA = Path(
-    "models/production/current/current/metadata.json"
-)
-
-
-
 
 
 def validate_inference_data(df):

@@ -1,0 +1,37 @@
+digraph EventStore {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11, style="filled,rounded", shape=box];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+    bgcolor="white";
+    label="Event Store & Prediction Logging Architecture";
+    labelloc=t;
+    fontsize=15;
+    fontcolor="#1a1a2e";
+
+    api [label="API Layer\n(/predict)", fillcolor="#82e0aa", fontcolor="#1a1a2e"];
+
+    redact [label="PII Redaction\nStrip: CustomerID,\nCountry, State, City,\nZip, Lat/Long", fillcolor="#fad7a0", fontcolor="#1a1a2e"];
+
+    retry [label="Retry with Backoff\n(max 3 retries,\nexponential delay)", fillcolor="#f5cba7", fontcolor="#1a1a2e"];
+
+    subgraph cluster_db {
+        label="SQLite / PostgreSQL";
+        style="filled,rounded";
+        fillcolor="#eaf2f8";
+        color="#2980b9";
+        fontcolor="#1f618d";
+
+        pred_table [label="prediction_events\n─────────────────\nid (PK)\nrequest_id (idx)\ncreated_at (idx)\nmodel_version\nprobability\nprediction\nlatency_seconds\nfeatures (JSON)", fillcolor="#aed6f1", fontcolor="#1a1a2e", shape=record];
+
+        outbox_table [label="outbox_events\n─────────────────\nid (PK)\ncreated_at (idx)\nevent_type (idx)\npayload (JSON)\nprocessed_at", fillcolor="#85c1e9", fontcolor="#1a1a2e", shape=record];
+    }
+
+    monitor [label="Prediction Reader\n(monitoring jobs)", fillcolor="#d2b4de", fontcolor="#1a1a2e"];
+    future [label="Future: Kafka / SQS\n(consume outbox)", fillcolor="#d5d8dc", fontcolor="#555555", style="filled,rounded,dashed"];
+
+    api -> redact -> retry -> pred_table;
+    retry -> outbox_table;
+    pred_table -> monitor [label="SELECT for\ndrift analysis"];
+    outbox_table -> future [style=dashed, label="async\nprocessing"];
+}
