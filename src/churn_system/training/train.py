@@ -7,6 +7,7 @@ Data → Validation → Feature Engineering → Training → Evaluation → Arti
 
 import json
 import pickle
+import random
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from churn_system.training.steps.feature_engineering import run_feature_engineer
 from churn_system.training.steps.model_evaluation import evaluate_candidates
 from churn_system.training.steps.model_training import train_candidate_models
 
+GLOBAL_SEED = 42
 MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
 logger = get_logger(__name__, CONFIG["logging"]["training"])
 
@@ -44,6 +46,12 @@ def summarize_feature(name, train_series, test_series):
 
 
 def main():
+    # ----------------------------
+    # Reproducibility: global seeds
+    # ----------------------------
+    random.seed(GLOBAL_SEED)
+    np.random.seed(GLOBAL_SEED)
+
     logger.info("===== Training Pipeline Started =====")
     mlflow_cfg = configure_mlflow()
 

@@ -36,6 +36,7 @@ def get_model_registry():
         "logistic_regression": LogisticRegression(
             max_iter=1000,
             class_weight="balanced",
+            random_state=42,
         ),
         "random_forest": RandomForestClassifier(
             n_estimators=150,
