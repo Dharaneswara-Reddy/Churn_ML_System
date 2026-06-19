@@ -1,0 +1,52 @@
+digraph APIFlow {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11, style="filled,rounded", shape=box];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+    bgcolor="white";
+    label="API Request Flow — /predict and /predict/batch";
+    labelloc=t;
+    fontsize=15;
+    fontcolor="#1a1a2e";
+
+    client [label="Client\n(HTTP POST)", shape=oval, fillcolor="#5dade2", fontcolor="white"];
+
+    sigterm_check [label="Shutdown\nMiddleware\n(503 if draining)", fillcolor="#fadbd8", fontcolor="#1a1a2e", shape=diamond];
+
+    rate_limit [label="Rate Limiter\n(slowapi)\n120/minute", fillcolor="#fdebd0", fontcolor="#1a1a2e"];
+
+    auth [label="API Key Check\n(X-API-Key header)", fillcolor="#f9e79f", fontcolor="#1a1a2e", shape=diamond];
+
+    pydantic [label="Pydantic Validation\n(dynamic RequestModel\nfrom model metadata)", fillcolor="#d5f5e3", fontcolor="#1a1a2e"];
+
+    build_feat [label="Build Features\n(build_features.py)\n• coerce types\n• drop meta cols", fillcolor="#a9dfbf", fontcolor="#1a1a2e"];
+
+    schema_valid [label="Inference Schema\nValidation\n(feature order check)", fillcolor="#82e0aa", fontcolor="#1a1a2e"];
+
+    predict [label="Model Predict\n(cached pipeline)\npredict_proba()", fillcolor="#d7bde2", fontcolor="#1a1a2e"];
+
+    threshold [label="Apply Threshold\n(default: 0.5)\nprob ≥ threshold → 1", fillcolor="#c39bd3", fontcolor="#1a1a2e"];
+
+    store [label="Store Event\n(SQLite + outbox)\nPII-redacted", fillcolor="#f5cba7", fontcolor="#1a1a2e"];
+
+    metrics_inc [label="Update Metrics\n(Prometheus)\nlatency, count, errors", fillcolor="#e8daef", fontcolor="#1a1a2e"];
+
+    response [label="JSON Response\n{\n  request_id,\n  churn_probability,\n  prediction,\n  threshold,\n  latency_seconds\n}", shape=oval, fillcolor="#2ecc71", fontcolor="white"];
+
+    err_401 [label="401\nUnauthorized", fillcolor="#e74c3c", fontcolor="white", shape=oval];
+    err_422 [label="422\nValidation Error", fillcolor="#e74c3c", fontcolor="white", shape=oval];
+    err_503 [label="503\nShutting Down", fillcolor="#e74c3c", fontcolor="white", shape=oval];
+
+    client -> sigterm_check;
+    sigterm_check -> rate_limit [label="ok"];
+    sigterm_check -> err_503 [label="draining"];
+    rate_limit -> auth;
+    auth -> pydantic [label="valid / disabled"];
+    auth -> err_401 [label="invalid key"];
+    pydantic -> build_feat [label="valid"];
+    pydantic -> err_422 [label="invalid body"];
+    build_feat -> schema_valid -> predict -> threshold;
+    threshold -> store;
+    threshold -> metrics_inc;
+    store -> response;
+}
