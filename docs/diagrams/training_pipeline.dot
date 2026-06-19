@@ -1,0 +1,41 @@
+digraph TrainingPipeline {
+    rankdir=LR;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11, style="filled,rounded", shape=box];
+    edge [fontname="Helvetica", fontsize=9, color="#7f8c8d"];
+    bgcolor="white";
+    label="Training Pipeline — Step-by-Step Flow";
+    labelloc=t;
+    fontsize=15;
+    fontcolor="#1a1a2e";
+
+    start [label="Start\ntrain.py:main()", shape=oval, fillcolor="#2ecc71", fontcolor="white"];
+
+    seed [label="Set Global Seeds\nrandom.seed(42)\nnp.random.seed(42)", fillcolor="#a3e4d7", fontcolor="#1a1a2e"];
+
+    mlflow_cfg [label="Configure MLflow\n(tracking URI,\nexperiment name)", fillcolor="#d5f5e3", fontcolor="#1a1a2e"];
+
+    ingest [label="Data Ingestion\nload CSV from\nCONFIG paths", fillcolor="#f9e79f", fontcolor="#1a1a2e"];
+
+    validate [label="Data Validation\n✓ Required columns\n✓ Target values {0,1}\n✓ Pandera schema v1", fillcolor="#f7dc6f", fontcolor="#1a1a2e"];
+
+    features [label="Feature Engineering\n• Drop meta columns\n• Coerce Total Charges\n• Drop target column", fillcolor="#f4d03f", fontcolor="#1a1a2e"];
+
+    split [label="Train/Test Split\n80% train / 20% test\nstratified by target", fillcolor="#fad7a0", fontcolor="#1a1a2e"];
+
+    ref [label="Save Training\nReference CSV\n(for drift baseline)", fillcolor="#f5cba7", fontcolor="#1a1a2e"];
+
+    train [label="Train 3 Candidates\n• LogisticRegression\n• RandomForest\n• GradientBoosting", fillcolor="#e8daef", fontcolor="#1a1a2e"];
+
+    eval [label="Evaluate All\n6 metrics per model:\naccuracy, precision,\nrecall, f1, roc_auc,\npr_auc", fillcolor="#d2b4de", fontcolor="#1a1a2e"];
+
+    winner [label="Select Winner\nby CONFIG metric\n(default: pr_auc)", fillcolor="#bb8fce", fontcolor="white"];
+
+    save [label="Save Artifacts\nmodel.pkl\nmetadata.json\nexperiment_report.json", fillcolor="#85c1e9", fontcolor="#1a1a2e"];
+
+    mlflow_log [label="Log to MLflow\n• model artifact\n• metrics\n• tags\n• register model", fillcolor="#aed6f1", fontcolor="#1a1a2e"];
+
+    done [label="Done", shape=oval, fillcolor="#2ecc71", fontcolor="white"];
+
+    start -> seed -> mlflow_cfg -> ingest -> validate -> features -> split -> ref -> train -> eval -> winner -> save -> mlflow_log -> done;
+}

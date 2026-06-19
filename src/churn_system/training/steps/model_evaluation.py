@@ -18,10 +18,16 @@ from churn_system.logging.logger import get_logger
 
 logger = get_logger(__name__, CONFIG["logging"]["training"])
 
+# Honour the configurable selection metric from settings.yaml
+SELECTION_METRIC = CONFIG.get("training", {}).get("selection_metric", "roc_auc")
+
 
 def evaluate_candidates(models, X_test, y_test):
     """
     Evaluate all models and return winner + experiment report.
+
+    The winner is selected by the metric defined in
+    ``CONFIG["training"]["selection_metric"]`` (default: ``roc_auc``).
     """
 
     results = {}
@@ -45,21 +51,22 @@ def evaluate_candidates(models, X_test, y_test):
             "pr_auc": float(average_precision_score(y_test, probs)),
         }
 
-        logger.info(f"{name} ROC-AUC = {metrics['roc_auc']:.4f}")
+        logger.info(f"{name} {SELECTION_METRIC} = {metrics[SELECTION_METRIC]:.4f}")
 
         results[name] = metrics
 
-        # winner selection rule
-        if metrics["roc_auc"] > best_score:
-            best_score = metrics["roc_auc"]
+        # winner selection rule — driven by CONFIG
+        if metrics[SELECTION_METRIC] > best_score:
+            best_score = metrics[SELECTION_METRIC]
             best_model = model
             best_name = name
 
     experiment_report = {
         "candidates": results,
         "winner": best_name,
+        "selection_metric": SELECTION_METRIC,
     }
 
-    logger.info(f"Winner selected: {best_name}")
+    logger.info(f"Winner selected: {best_name} ({SELECTION_METRIC}={best_score:.4f})")
 
     return best_model, experiment_report, results[best_name]
