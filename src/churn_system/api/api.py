@@ -5,16 +5,20 @@ Churn prediction HTTP API.
 - Optional API key (CHURN_API_KEY)
 - Rate limiting (slowapi)
 - Structured error responses
+- SIGTERM graceful shutdown
+- Batch prediction endpoint
 """
 
 from __future__ import annotations
 
 import os
 import pickle
+import signal
 import time
 import uuid
 from functools import lru_cache
 from pathlib import Path
+from typing import List
 
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -50,6 +54,36 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
+# ---------------------------------------------------------------------------
+# Graceful shutdown on SIGTERM (container orchestrator → drain → exit)
+# ---------------------------------------------------------------------------
+_shutting_down = False
+
+
+def _handle_sigterm(signum, frame):  # noqa: ARG001
+    global _shutting_down
+    _shutting_down = True
+    logger.info("SIGTERM received — draining in-flight requests before shutdown")
+
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
+
+
+@app.middleware("http")
+async def shutdown_middleware(request: Request, call_next):
+    """Reject new requests once SIGTERM has been received."""
+    if _shutting_down and request.url.path not in ("/health", "/metrics"):
+        return JSONResponse(
+            status_code=503,
+            content={"error_code": "shutting_down", "message": "Server is shutting down"},
+        )
+    response = await call_next(request)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Auth + rate limit helpers
+# ---------------------------------------------------------------------------
 def _rate_limit() -> str:
     return str(config.get("api", {}).get("rate_limit", "60/minute"))
 
@@ -91,9 +125,12 @@ async def request_validation_handler(
 
 RequestModel = generate_request_model()
 
+MAX_BATCH_SIZE = int(os.environ.get("CHURN_MAX_BATCH_SIZE", "100"))
+
 
 @lru_cache(maxsize=1)
 def get_model():
+    """Load production model with LRU cache (loaded once, reused)."""
     model_path = Path(CONFIG["paths"]["production_model"])
     with open(model_path, "rb") as f:
         return pickle.load(f)
@@ -102,6 +139,9 @@ def get_model():
 THRESHOLD = config["inference"]["threshold"]
 
 
+# ---------------------------------------------------------------------------
+# Health / metrics endpoints
+# ---------------------------------------------------------------------------
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "Churn model is running"}
@@ -109,6 +149,7 @@ def health_check():
 
 @app.get("/health")
 def health():
+    """Readiness / liveness probe endpoint."""
     return {"status": "ok"}
 
 @app.get("/metrics")
@@ -117,6 +158,9 @@ def metrics():
     return Response(content=body, media_type=content_type)
 
 
+# ---------------------------------------------------------------------------
+# Single-row predict
+# ---------------------------------------------------------------------------
 @app.post("/predict")
 @limiter.limit(_rate_limit())
 def predict(
@@ -200,6 +244,89 @@ def predict(
         "prediction": prediction,
         "threshold": THRESHOLD,
         "latency_seconds": round(latency, 4),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Batch predict (configurable max via CHURN_MAX_BATCH_SIZE, default 100)
+# ---------------------------------------------------------------------------
+@app.post("/predict/batch")
+@limiter.limit(_rate_limit())
+def predict_batch(
+    request: Request,
+    payloads: List[RequestModel],
+    _: None = Depends(verify_api_key),
+):
+    """
+    Accepts a list of feature rows and returns churn probabilities.
+
+    Maximum batch size is controlled by the ``CHURN_MAX_BATCH_SIZE``
+    environment variable (default: 100).
+    """
+    if len(payloads) > MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorBody(
+                error_code="batch_too_large",
+                message=f"Batch size {len(payloads)} exceeds maximum of {MAX_BATCH_SIZE}",
+                detail=None,
+            ).model_dump(),
+        )
+
+    batch_id = uuid.uuid4().hex
+    start_time = time.time()
+    logger.info("Batch request | batch_id=%s | size=%d", batch_id, len(payloads))
+
+    try:
+        rows = [p.model_dump() for p in payloads]
+        df = pd.DataFrame(rows)
+        df = build_features(df, training=False)
+        df_valid = validate_inference_data(df)
+    except (ValueError, Exception) as e:
+        REQUESTS_TOTAL.labels(path="/predict/batch", method="POST", status="400").inc()
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorBody(
+                error_code="invalid_input",
+                message="Batch validation failed",
+                detail=str(e),
+            ).model_dump(),
+        ) from e
+
+    try:
+        model = get_model()
+        probs = model.predict_proba(df_valid)[:, 1]
+    except Exception as e:
+        INFERENCE_ERRORS_TOTAL.inc()
+        REQUESTS_TOTAL.labels(path="/predict/batch", method="POST", status="500").inc()
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorBody(
+                error_code="inference_error",
+                message="Batch inference failed",
+                detail=None,
+            ).model_dump(),
+        ) from e
+
+    latency = time.time() - start_time
+    REQUEST_LATENCY_SECONDS.labels(path="/predict/batch", method="POST").observe(latency)
+    REQUESTS_TOTAL.labels(path="/predict/batch", method="POST", status="200").inc()
+
+    results = []
+    for i, prob in enumerate(probs):
+        p = float(prob)
+        results.append({
+            "index": i,
+            "churn_probability": round(p, 4),
+            "prediction": int(p >= THRESHOLD),
+        })
+
+    return {
+        "batch_id": batch_id,
+        "count": len(results),
+        "threshold": THRESHOLD,
+        "latency_seconds": round(latency, 4),
+        "predictions": results,
     }
 
 

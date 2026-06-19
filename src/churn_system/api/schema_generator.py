@@ -7,7 +7,6 @@ with typed fields (not Any).
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -15,17 +14,12 @@ import pandas as pd
 from pydantic import ConfigDict, Field, create_model
 
 from churn_system.config.config import CONFIG
+from churn_system.inference.model_contract import load_model_contract
 from churn_system.training.feature_types import infer_feature_types
 
 
 def _load_metadata() -> dict[str, Any]:
-    metadata_path = (
-        Path(CONFIG["paths"]["production_model"]).parent / "metadata.json"
-    )
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Production metadata not found: {metadata_path}")
-    with open(metadata_path, "r") as f:
-        return json.load(f)
+    return load_model_contract()
 
 
 def load_feature_schema() -> list[str]:

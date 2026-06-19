@@ -8,9 +8,25 @@ services:
     environment:
       CHURN_API_KEY: ${CHURN_API_KEY:-}
       CHURN_DISABLE_RATE_LIMIT: ${CHURN_DISABLE_RATE_LIMIT:-}
+      CHURN_LOG_FORMAT: ${CHURN_LOG_FORMAT:-json}
     volumes:
       - ./models:/app/models:ro
       - ./data:/app/data
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    stop_grace_period: 30s
 
   prometheus:
     image: prom/prometheus:latest
@@ -20,7 +36,13 @@ services:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./observability/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
 
   train:
     build:
@@ -32,6 +54,16 @@ services:
       CHURN_RAW_DATA_PATH: ${CHURN_RAW_DATA_PATH:-data/Telco_customer_churn_raw.csv}
       CHURN_EXPERIMENTS_DIR: ${CHURN_EXPERIMENTS_DIR:-models/experiments}
       CHURN_TRAINING_REFERENCE_PATH: ${CHURN_TRAINING_REFERENCE_PATH:-data/training_reference.csv}
+      CHURN_MLFLOW_ENABLED: ${CHURN_MLFLOW_ENABLED:-1}
+      CHURN_LOG_FORMAT: ${CHURN_LOG_FORMAT:-json}
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 512M
