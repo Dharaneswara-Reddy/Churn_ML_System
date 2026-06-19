@@ -4,9 +4,21 @@ paths:
   training_reference: "data/training_reference.csv"
   production_model: "models/production/current/model.pkl"
   experiments_dir: "models/experiments"
+  monitoring_dir: "models/monitoring"
+  lineage_path: "models/lineage/lineage.json"
+  prediction_log_csv: "data/inference_logs/predictions.csv"
 
 inference:
   threshold: 0.5
+
+training:
+  min_rows: 100
+  min_class_count: 2
+  selection_metric: "pr_auc"
+
+model_promotion:
+  metric: "pr_auc"
+  min_improvement: 0.0
 
 api:
   # slowapi format, e.g. "60/minute", "100/hour"
