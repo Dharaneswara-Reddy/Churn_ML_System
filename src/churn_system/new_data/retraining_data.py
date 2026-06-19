@@ -7,10 +7,12 @@ from pathlib import Path
 
 import pandas as pd
 
-RAW_DATA = Path("data/Telco_customer_churn_raw.csv")
-PROD_LOGS = Path("data/inference_logs/predictions.csv")
+from churn_system.config.config import CONFIG
 
-OUTPUT = Path("data/retraining_dataset.csv")
+RAW_DATA = Path(CONFIG["paths"]["raw_data"])
+PROD_LOGS = Path(CONFIG["paths"]["prediction_log_csv"])
+
+OUTPUT = Path(CONFIG["paths"]["retraining_data"])
 
 def build_retraining_dataset():
     if not RAW_DATA.exists():

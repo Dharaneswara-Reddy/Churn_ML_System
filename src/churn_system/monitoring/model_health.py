@@ -18,10 +18,10 @@ from churn_system.observability.metrics import DRIFTING_FEATURES, RETRAINING_REC
 
 logger = get_logger(__name__,CONFIG["logging"]["monitoring"])
 
-TRAIN_PATH = Path("data/training_reference.csv")
-PROD_PATH = Path("data/inference_logs/predictions.csv")
+TRAIN_PATH = Path(CONFIG["paths"]["training_reference"])
+PROD_PATH = Path(CONFIG["paths"]["prediction_log_csv"])
 
-REPORT_PATH = Path("models/monitoring")
+REPORT_PATH = Path(CONFIG["paths"]["monitoring_dir"])
 REPORT_PATH.mkdir(parents=True, exist_ok=True)
 
 HEALTH_FILE = REPORT_PATH / "health_report.json"

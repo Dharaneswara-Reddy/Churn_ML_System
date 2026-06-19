@@ -14,7 +14,7 @@ from churn_system.monitoring.prediction_reader import load_predictions_df
 
 logger = get_logger(__name__, CONFIG["logging"]["monitoring"])
 
-REPORT_DIR = Path("models/monitoring")
+REPORT_DIR = Path(CONFIG["paths"]["monitoring_dir"])
 REPORT_DIR.mkdir(parents = True, exist_ok=True)
 
 REPORT_FILE = REPORT_DIR / "prediction_report.json"

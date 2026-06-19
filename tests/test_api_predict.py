@@ -103,3 +103,39 @@ def test_predict_requires_api_key_when_set(monkeypatch):
         headers={"X-API-Key": "secret"},
     )
     assert r2.status_code == 200
+
+
+def test_batch_predict_returns_multiple_results(api_module, monkeypatch):
+    class StubModel:
+        def predict_proba(self, X):
+            return np.tile([0.3, 0.7], (len(X), 1))
+
+    monkeypatch.setattr(api_module, "get_model", lambda: StubModel())
+
+    client = TestClient(api_module.app)
+    batch = [_sample_payload(), _sample_payload()]
+    r = client.post("/predict/batch", json=batch)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["count"] == 2
+    assert len(body["predictions"]) == 2
+    assert "batch_id" in body
+    for pred in body["predictions"]:
+        assert "churn_probability" in pred
+        assert pred["prediction"] in (0, 1)
+
+
+def test_health_endpoint(api_module):
+    client = TestClient(api_module.app)
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
+def test_metrics_endpoint(api_module):
+    client = TestClient(api_module.app)
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    # Prometheus text format
+    assert b"churn_api" in r.content
+

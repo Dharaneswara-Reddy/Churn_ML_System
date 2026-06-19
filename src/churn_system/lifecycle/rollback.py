@@ -13,8 +13,8 @@ from churn_system.logging.logger import get_logger
 
 logger = get_logger(__name__, CONFIG["logging"]["lifecycle"])
 
-LINEAGE_PATH = Path("models/lineage/lineage.json")
-HEALTH_PATH = Path("models/monitoring/health_report.json")
+LINEAGE_PATH = Path(CONFIG["paths"]["lineage_path"])
+HEALTH_PATH = Path(CONFIG["paths"]["monitoring_dir"]) / "health_report.json"
 
 
 def rollback_if_needed():

@@ -19,8 +19,8 @@ from churn_system.logging.logger import get_logger
 logger = get_logger(__name__,CONFIG["logging"]["monitoring"])
 
 
-TRAIN_PATH = Path("data/training_reference.csv")
-PROD_PATH = Path("data/inference_logs/predictions.csv")  # legacy; DB is preferred
+TRAIN_PATH = Path(CONFIG["paths"]["training_reference"])
+PROD_PATH = Path(CONFIG["paths"]["prediction_log_csv"])  # legacy; DB is preferred
 
 
 PSI_THRESHOLD = 0.2

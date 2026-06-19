@@ -1,0 +1,144 @@
+digraph SystemArchitecture {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11, style="filled,rounded", shape=box];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+    bgcolor="white";
+    label="Churn ML System — High-Level Architecture";
+    labelloc=t;
+    labeljust=c;
+    fontsize=16;
+    fontcolor="#1a1a2e";
+
+    subgraph cluster_config {
+        label="Configuration Layer";
+        style="filled,rounded";
+        fillcolor="#e8f4f8";
+        color="#3498db";
+        fontcolor="#2c3e50";
+
+        config [label="config.py\n(YAML + env overrides)", fillcolor="#85c1e9", fontcolor="#1a1a2e"];
+        settings [label="settings.yaml\n(paths, thresholds,\nrate limits)", fillcolor="#aed6f1", fontcolor="#1a1a2e"];
+    }
+
+    subgraph cluster_training {
+        label="Training Pipeline";
+        style="filled,rounded";
+        fillcolor="#fef9e7";
+        color="#f39c12";
+        fontcolor="#7d6608";
+
+        ingestion [label="Data Ingestion\n(load CSV)", fillcolor="#f9e79f", fontcolor="#1a1a2e"];
+        validation [label="Data Validation\n(Pandera + schema)", fillcolor="#f7dc6f", fontcolor="#1a1a2e"];
+        feat_eng [label="Feature Engineering\n(build_features)", fillcolor="#f4d03f", fontcolor="#1a1a2e"];
+        model_train [label="Model Training\n(3 candidates)", fillcolor="#f0b429", fontcolor="#1a1a2e"];
+        evaluation [label="Model Evaluation\n(PR-AUC winner)", fillcolor="#e67e22", fontcolor="white"];
+    }
+
+    subgraph cluster_serving {
+        label="API Serving Layer";
+        style="filled,rounded";
+        fillcolor="#eafaf1";
+        color="#27ae60";
+        fontcolor="#1e8449";
+
+        api [label="FastAPI Server\n/predict\n/predict/batch\n/health  /metrics", fillcolor="#82e0aa", fontcolor="#1a1a2e"];
+        schema_gen [label="Schema Generator\n(dynamic Pydantic)", fillcolor="#a9dfbf", fontcolor="#1a1a2e"];
+        errors [label="Error Contracts\n(ErrorBody)", fillcolor="#a9dfbf", fontcolor="#1a1a2e"];
+    }
+
+    subgraph cluster_inference {
+        label="Inference Engine";
+        style="filled,rounded";
+        fillcolor="#f5eef8";
+        color="#8e44ad";
+        fontcolor="#6c3483";
+
+        model_contract [label="Model Contract\n(cached metadata)", fillcolor="#d7bde2", fontcolor="#1a1a2e"];
+        inference [label="Inference Runner\n(load model + predict)", fillcolor="#c39bd3", fontcolor="#1a1a2e"];
+        artifacts [label="Artifact Validator\n(bundle checks)", fillcolor="#bb8fce", fontcolor="#1a1a2e"];
+    }
+
+    subgraph cluster_events {
+        label="Event Store";
+        style="filled,rounded";
+        fillcolor="#fdf2e9";
+        color="#e67e22";
+        fontcolor="#a04000";
+
+        db [label="SQLAlchemy DB\n(SQLite / Postgres)", fillcolor="#f5cba7", fontcolor="#1a1a2e"];
+        predictions_store [label="Prediction Events\n(redacted + outbox)", fillcolor="#edbb99", fontcolor="#1a1a2e"];
+    }
+
+    subgraph cluster_monitoring {
+        label="Monitoring & Drift";
+        style="filled,rounded";
+        fillcolor="#fdedec";
+        color="#e74c3c";
+        fontcolor="#922b21";
+
+        drift [label="Drift Detection\n(PSI per feature)", fillcolor="#f5b7b1", fontcolor="#1a1a2e"];
+        health [label="Model Health\n(drift threshold)", fillcolor="#f1948a", fontcolor="#1a1a2e"];
+        pred_monitor [label="Prediction Monitor\n(distribution stats)", fillcolor="#ec7063", fontcolor="white"];
+    }
+
+    subgraph cluster_lifecycle {
+        label="Lifecycle Management";
+        style="filled,rounded";
+        fillcolor="#eaf2f8";
+        color="#2980b9";
+        fontcolor="#1f618d";
+
+        orchestrator [label="Orchestrator\n(monitor → retrain\n→ compare → promote)", fillcolor="#85c1e9", fontcolor="#1a1a2e"];
+        promote [label="Model Promotion\n(schema gate)", fillcolor="#7fb3d8", fontcolor="#1a1a2e"];
+        rollback [label="Auto Rollback\n(lineage-based)", fillcolor="#5dade2", fontcolor="white"];
+        lineage [label="Lineage Tracker\n(append-only log)", fillcolor="#3498db", fontcolor="white"];
+        scheduler [label="Scheduler\n(periodic loop)", fillcolor="#2e86c1", fontcolor="white"];
+    }
+
+    subgraph cluster_observability {
+        label="Observability";
+        style="filled,rounded";
+        fillcolor="#f4ecf7";
+        color="#7d3c98";
+        fontcolor="#6c3483";
+
+        metrics [label="Prometheus Metrics\n(counters, histograms,\ngauges)", fillcolor="#d2b4de", fontcolor="#1a1a2e"];
+        logger [label="Structured Logger\n(JSON / text)", fillcolor="#c39bd3", fontcolor="#1a1a2e"];
+    }
+
+    // Connections
+    settings -> config;
+    config -> ingestion;
+    config -> api;
+    config -> drift;
+    config -> orchestrator;
+
+    ingestion -> validation -> feat_eng -> model_train -> evaluation;
+
+    evaluation -> artifacts [label="save model.pkl\n+ metadata.json"];
+
+    api -> schema_gen [label="generates\nrequest model"];
+    api -> model_contract [label="load contract"];
+    api -> inference [label="predict"];
+    api -> predictions_store [label="store event"];
+    api -> metrics [label="inc counters"];
+    api -> errors [label="error responses"];
+
+    model_contract -> artifacts [label="validate bundle"];
+    inference -> model_contract;
+
+    predictions_store -> db;
+
+    scheduler -> orchestrator;
+    orchestrator -> health [label="check drift"];
+    orchestrator -> model_train [label="retrain", style=dashed];
+    orchestrator -> promote [label="if challenger wins"];
+    orchestrator -> rollback [label="safety net"];
+    promote -> lineage [label="record"];
+    rollback -> lineage [label="read history"];
+
+    health -> drift [label="calculate PSI"];
+    health -> metrics [label="set gauges"];
+    pred_monitor -> db [label="read predictions", style=dashed];
+}

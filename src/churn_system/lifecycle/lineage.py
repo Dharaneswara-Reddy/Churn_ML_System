@@ -8,7 +8,9 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-LINEAGE_PATH = Path("models/lineage/lineage.json")
+from churn_system.config.config import CONFIG
+
+LINEAGE_PATH = Path(CONFIG["paths"]["lineage_path"])
 LINEAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 def load_lineage():

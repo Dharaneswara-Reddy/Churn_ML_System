@@ -1,0 +1,48 @@
+digraph MonitoringFlow {
+    rankdir=LR;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11, style="filled,rounded", shape=box];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+    bgcolor="white";
+    label="Monitoring & Drift Detection Pipeline";
+    labelloc=t;
+    fontsize=15;
+    fontcolor="#1a1a2e";
+
+    train_ref [label="Training Reference\nCSV\n(saved at train time)", fillcolor="#aed6f1", fontcolor="#1a1a2e"];
+    prod_events [label="Production Events\n(SQLite DB)\nor legacy CSV", fillcolor="#f5cba7", fontcolor="#1a1a2e"];
+
+    reader [label="Prediction Reader\nload_predictions_df()\nDB → DataFrame", fillcolor="#fdebd0", fontcolor="#1a1a2e"];
+
+    numeric [label="Select Numeric\nColumns Only", fillcolor="#f9e79f", fontcolor="#1a1a2e"];
+
+    psi [label="Calculate PSI\nper Feature\n(10-bin histogram)", fillcolor="#f5b7b1", fontcolor="#1a1a2e"];
+
+    threshold [label="PSI > 0.2?", fillcolor="#fad7a0", fontcolor="#1a1a2e", shape=diamond];
+
+    stable [label="STABLE", fillcolor="#82e0aa", fontcolor="#1a1a2e"];
+    drifted [label="DRIFT\nDETECTED", fillcolor="#e74c3c", fontcolor="white"];
+
+    count [label="Count Drifting\nFeatures", fillcolor="#d2b4de", fontcolor="#1a1a2e"];
+
+    retrain_check [label="Drifting ≥ 2?", fillcolor="#bb8fce", fontcolor="white", shape=diamond];
+
+    report [label="Write Health\nReport JSON\n(health_report.json)", fillcolor="#85c1e9", fontcolor="#1a1a2e"];
+
+    prometheus [label="Update Prometheus\nGauges\n• drifting_count\n• retraining_flag", fillcolor="#d7bde2", fontcolor="#1a1a2e"];
+
+    pred_report [label="Prediction Report\n• avg/std/min/max prob\n• high_risk_ratio\n• low_risk_ratio", fillcolor="#a9dfbf", fontcolor="#1a1a2e"];
+
+    train_ref -> numeric;
+    prod_events -> reader -> numeric;
+    numeric -> psi;
+    psi -> threshold;
+    threshold -> stable [label="NO"];
+    threshold -> drifted [label="YES"];
+    stable -> count;
+    drifted -> count;
+    count -> retrain_check;
+    retrain_check -> report [label="write result"];
+    report -> prometheus;
+    reader -> pred_report [style=dashed, label="also generates"];
+}
