@@ -1,0 +1,26 @@
+digraph ConfigFlow {
+    rankdir=LR;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11, style="filled,rounded", shape=box];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+    bgcolor="white";
+    label="Configuration System — YAML + Environment Overrides";
+    labelloc=t;
+    fontsize=15;
+    fontcolor="#1a1a2e";
+
+    yaml [label="settings.yaml\n─────────────\npaths:\n  raw_data\n  production_model\n  experiments_dir\n  monitoring_dir\n  lineage_path\n  ...\ninference:\n  threshold: 0.5\ntraining:\n  selection_metric: pr_auc\napi:\n  rate_limit: 120/min\nmlflow:\n  experiment_name\nscheduler:\n  interval_seconds: 60", fillcolor="#aed6f1", fontcolor="#1a1a2e", shape=record];
+
+    env [label="Environment Variables\n─────────────────────\nCHURN_RAW_DATA_PATH\nCHURN_PRODUCTION_MODEL_PATH\nCHURN_EXPERIMENTS_DIR\nCHURN_MONITORING_DIR\nCHURN_LINEAGE_PATH\nCHURN_INFERENCE_THRESHOLD\nCHURN_API_RATE_LIMIT\nCHURN_MLFLOW_TRACKING_URI\nCHURN_LOG_FORMAT\nCHURN_API_KEY\nCHURN_MAX_BATCH_SIZE", fillcolor="#f9e79f", fontcolor="#1a1a2e", shape=record];
+
+    loader [label="config.py\nload_config()\n─────────────\n1. Load YAML\n2. Override with\n   env vars\n3. Return dict", fillcolor="#82e0aa", fontcolor="#1a1a2e"];
+
+    config_obj [label="CONFIG\n(module-level\nglobal dict)", fillcolor="#2ecc71", fontcolor="white"];
+
+    consumers [label="All Modules\n• api/  • training/\n• monitoring/\n• lifecycle/\n• events/\n• inference/", fillcolor="#d7bde2", fontcolor="#1a1a2e"];
+
+    yaml -> loader [label="base values"];
+    env -> loader [label="overrides\n(if set)"];
+    loader -> config_obj;
+    config_obj -> consumers [label="CONFIG[\"paths\"][...]\nCONFIG[\"inference\"][...]\netc."];
+}
