@@ -1,3 +1,23 @@
+"""
+Concurrent Model Training
+
+Trains candidate models in PARALLEL using ThreadPoolExecutor with
+proper synchronization for shared result collection.
+
+Why ThreadPoolExecutor (not ProcessPoolExecutor):
+  - sklearn releases the GIL during C-extension computation (BLAS/LAPACK)
+  - Threads share memory → no expensive serialization of DataFrames
+  - Each candidate gets its own preprocessor to avoid shared-state bugs
+
+Synchronization primitives used:
+  - threading.Lock:  protects the shared `fitted` results dict
+  - concurrent.futures.Future: provides thread-safe result collection
+  - as_completed(): enables eager result processing as models finish
+"""
+
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import numpy as np
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
@@ -51,26 +71,67 @@ def get_model_registry():
     }
 
 
+def _train_single_candidate(name: str, estimator, X_train, y_train) -> tuple[str, Pipeline]:
+    """
+    Train a single candidate model. Designed to be submitted to a thread pool.
+
+    Each invocation builds its own preprocessor instance to guarantee no
+    shared mutable state between threads.
+    """
+    logger.info(f"[Thread {threading.current_thread().name}] Training candidate: {name}")
+    preprocessor = build_preprocessor(X_train)
+    pipeline = Pipeline(
+        steps=[
+            ("preprocessor", preprocessor),
+            ("model", estimator),
+        ]
+    )
+    pipeline.fit(X_train, y_train)
+    logger.info(f"[Thread {threading.current_thread().name}] Finished training: {name}")
+    return name, pipeline
+
+
 def train_candidate_models(X_train, y_train):
     """
-    Train all registered candidates and return name -> fitted Pipeline.
+    Train all registered candidates CONCURRENTLY and return name -> fitted Pipeline.
 
-    Each candidate gets its own preprocessor instance to avoid shared-state bugs
-    across sklearn Pipeline fits.
+    Uses ThreadPoolExecutor for parallel training:
+    - sklearn releases the GIL during BLAS/LAPACK operations, so threads
+      achieve genuine parallelism on C-extension code paths.
+    - A threading.Lock guards the shared results dictionary.
+    - as_completed() processes results as soon as each model finishes.
     """
     registry = get_model_registry()
     fitted: dict[str, Pipeline] = {}
+    results_lock = threading.Lock()
 
-    for name, estimator in registry.items():
-        logger.info(f"Training candidate model: {name}")
-        preprocessor = build_preprocessor(X_train)
-        pipeline = Pipeline(
-            steps=[
-                ("preprocessor", preprocessor),
-                ("model", estimator),
-            ]
-        )
-        pipeline.fit(X_train, y_train)
-        fitted[name] = pipeline
+    max_workers = CONFIG.get("training", {}).get("max_workers", len(registry))
 
+    logger.info(
+        f"Starting concurrent training of {len(registry)} candidates "
+        f"with max_workers={max_workers}"
+    )
+
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="trainer") as executor:
+        # Submit all training jobs
+        future_to_name = {
+            executor.submit(
+                _train_single_candidate, name, estimator, X_train, y_train
+            ): name
+            for name, estimator in registry.items()
+        }
+
+        # Collect results as they complete (not in submission order)
+        for future in as_completed(future_to_name):
+            submitted_name = future_to_name[future]
+            try:
+                name, pipeline = future.result()
+                with results_lock:
+                    fitted[name] = pipeline
+                logger.info(f"Candidate '{name}' training completed successfully")
+            except Exception:
+                logger.exception(f"Candidate '{submitted_name}' training FAILED")
+                raise
+
+    logger.info(f"All {len(fitted)} candidates trained successfully")
     return fitted

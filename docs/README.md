@@ -24,6 +24,8 @@ diagram above, then dive into whichever package is relevant to your task.
 | Document | Package | What It Covers |
 |----------|---------|----------------|
 | [api.md](api.md) | `churn_system.api` | FastAPI server, error contracts, dynamic schema generation |
+| [serving.md](serving.md) | `churn_system.serving` | Thread-safe ModelRegistry, hot-reloading with ReadWriteLock |
+| [workers.md](workers.md) | `churn_system.workers` | Asynchronous Outbox consumer, distributed concurrency safety |
 | [config.md](config.md) | `churn_system.config` | YAML configuration, environment variable overrides |
 | [training.md](training.md) | `churn_system.training` | Full training pipeline, steps, candidate models, evaluation |
 | [features.md](features.md) | `churn_system.features` | Shared feature builder used by both training and inference |

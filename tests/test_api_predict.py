@@ -1,4 +1,9 @@
-"""Regression: /predict happy path with mocked model."""
+"""Regression: /predict happy path with mocked model.
+
+Tests monkeypatch ``_get_model`` which now delegates to the
+thread-safe ModelRegistry singleton. The stub model replaces the
+registry lookup so no real model.pkl is needed on disk.
+"""
 
 from __future__ import annotations
 
@@ -50,12 +55,18 @@ def _sample_payload():
     }
 
 
-def test_predict_returns_probability(api_module, monkeypatch):
+def _stub_model():
+    """Return a lightweight stub that mimics sklearn predict_proba()."""
+
     class StubModel:
         def predict_proba(self, X):
             return np.tile([0.3, 0.7], (len(X), 1))
 
-    monkeypatch.setattr(api_module, "get_model", lambda: StubModel())
+    return StubModel()
+
+
+def test_predict_returns_probability(api_module, monkeypatch):
+    monkeypatch.setattr(api_module, "_get_model", lambda: _stub_model())
 
     client = TestClient(api_module.app)
     r = client.post("/predict", json=_sample_payload())
@@ -67,11 +78,7 @@ def test_predict_returns_probability(api_module, monkeypatch):
 
 
 def test_predict_rejects_extra_field(api_module, monkeypatch):
-    class StubModel:
-        def predict_proba(self, X):
-            return np.tile([0.5, 0.5], (len(X), 1))
-
-    monkeypatch.setattr(api_module, "get_model", lambda: StubModel())
+    monkeypatch.setattr(api_module, "_get_model", lambda: _stub_model())
 
     p = _sample_payload()
     p["unexpected"] = 1
@@ -87,11 +94,7 @@ def test_predict_requires_api_key_when_set(monkeypatch):
 
     importlib.reload(api_mod)
 
-    class StubModel:
-        def predict_proba(self, X):
-            return np.tile([0.3, 0.7], (len(X), 1))
-
-    monkeypatch.setattr(api_mod, "get_model", lambda: StubModel())
+    monkeypatch.setattr(api_mod, "_get_model", lambda: _stub_model())
 
     client = TestClient(api_mod.app)
     r = client.post("/predict", json=_sample_payload())
@@ -106,11 +109,7 @@ def test_predict_requires_api_key_when_set(monkeypatch):
 
 
 def test_batch_predict_returns_multiple_results(api_module, monkeypatch):
-    class StubModel:
-        def predict_proba(self, X):
-            return np.tile([0.3, 0.7], (len(X), 1))
-
-    monkeypatch.setattr(api_module, "get_model", lambda: StubModel())
+    monkeypatch.setattr(api_module, "_get_model", lambda: _stub_model())
 
     client = TestClient(api_module.app)
     batch = [_sample_payload(), _sample_payload()]
@@ -138,4 +137,3 @@ def test_metrics_endpoint(api_module):
     assert r.status_code == 200
     # Prometheus text format
     assert b"churn_api" in r.content
-

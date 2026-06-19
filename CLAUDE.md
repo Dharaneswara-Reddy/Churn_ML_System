@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus MCP
 
-This project is indexed by GitNexus as **Churn_Ml_System** (176 symbols, 373 relationships, 19 execution flows).
+This project is indexed by GitNexus as **Churn_Ml_System** (544 symbols, 1065 relationships, 30 execution flows).
 
 GitNexus provides a knowledge graph over this codebase — call chains, blast radius, execution flows, and semantic search.
 
