@@ -31,7 +31,8 @@ diagram above, then dive into whichever package is relevant to your task.
 | [features.md](features.md) | `churn_system.features` | Shared feature builder used by both training and inference |
 | [inference.md](inference.md) | `churn_system.inference` | Offline inference helpers and model contract management |
 | [events.md](events.md) | `churn_system.events` | Durable event store (SQLAlchemy/SQLite), outbox pattern |
-| [monitoring.md](monitoring.md) | `churn_system.monitoring` | Drift detection (PSI), model health, prediction monitoring |
+| [monitoring.md](monitoring.md) | `churn_system.monitoring` | Drift (PSI), data quality, calibration, prediction monitoring |
+| [explainability.md](explainability.md) | `churn_system.explainability` | SHAP-based feature explanations, global importance |
 | [lifecycle.md](lifecycle.md) | `churn_system.lifecycle` | Orchestrator, promotion, rollback, lineage, scheduling |
 | [validation.md](validation.md) | `churn_system.validation` | Pandera schema enforcement from YAML definitions |
 | [observability.md](observability.md) | `churn_system.observability` | Prometheus counters, histograms, gauges |
