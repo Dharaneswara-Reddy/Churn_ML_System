@@ -91,7 +91,7 @@ def _get_explainer() -> shap.Explainer:
     Uses double-checked locking to avoid holding the lock on the hot path
     once the explainer is initialized.
     """
-    global _explainer
+    global _explainer, _feature_names
 
     if _explainer is not None:
         return _explainer
@@ -103,18 +103,33 @@ def _get_explainer() -> shap.Explainer:
         model = ModelRegistry.instance().get_model()
         background = _load_background_data()
 
-        # Detect model type from the pipeline's final estimator
-        final_estimator = model.named_steps.get("model", model)
+        # Extract preprocessor and final estimator if available
+        if hasattr(model, "named_steps") and "preprocessor" in model.named_steps and "model" in model.named_steps:
+            preprocessor = model.named_steps["preprocessor"]
+            final_estimator = model.named_steps["model"]
+            preprocessed_bg = preprocessor.transform(background)
+            if hasattr(preprocessed_bg, "toarray"):
+                preprocessed_bg = preprocessed_bg.toarray()
+            try:
+                raw_names = preprocessor.get_feature_names_out()
+                _feature_names = [name.split("__", 1)[-1] for name in raw_names]
+            except Exception:
+                _feature_names = [f"Feature_{i}" for i in range(preprocessed_bg.shape[1])]
+        else:
+            final_estimator = model
+            preprocessed_bg = background.to_numpy() if hasattr(background, "to_numpy") else background
+            _feature_names = list(background.columns) if hasattr(background, "columns") else None
+
         estimator_name = type(final_estimator).__name__
 
         if estimator_name in ("RandomForestClassifier", "GradientBoostingClassifier"):
-            _explainer = shap.TreeExplainer(model, data=background)
+            _explainer = shap.TreeExplainer(final_estimator, data=preprocessed_bg)
             logger.info("TreeExplainer initialized for %s", estimator_name)
         else:
-            # KernelExplainer works for any model but is slower
-            summary = shap.kmeans(background, min(10, len(background)))
+            # KernelExplainer fallback
+            summary = shap.kmeans(preprocessed_bg, min(10, len(preprocessed_bg)))
             _explainer = shap.KernelExplainer(
-                lambda x: model.predict_proba(pd.DataFrame(x, columns=background.columns)),
+                lambda x: final_estimator.predict_proba(x),
                 summary,
             )
             logger.info("KernelExplainer initialized for %s", estimator_name)
@@ -157,8 +172,16 @@ def explain_prediction(raw_features: dict) -> dict[str, Any]:
     model = ModelRegistry.instance().get_model()
     prob = float(model.predict_proba(df_valid)[:, 1][0])
 
+    if hasattr(model, "named_steps") and "preprocessor" in model.named_steps:
+        preprocessor = model.named_steps["preprocessor"]
+        preprocessed_input = preprocessor.transform(df_valid)
+        if hasattr(preprocessed_input, "toarray"):
+            preprocessed_input = preprocessed_input.toarray()
+    else:
+        preprocessed_input = df_valid
+
     explainer = _get_explainer()
-    shap_values = explainer.shap_values(df_valid)
+    shap_values = explainer.shap_values(preprocessed_input)
 
     # For binary classifiers, shap_values may be a list [class_0, class_1]
     if isinstance(shap_values, list):
@@ -168,7 +191,7 @@ def explain_prediction(raw_features: dict) -> dict[str, Any]:
     else:
         values = shap_values[0]
 
-    feature_names = _feature_names or list(df_valid.columns)
+    feature_names = _feature_names or [f"Feature_{i}" for i in range(len(values))]
     contributions = dict(zip(feature_names, [round(float(v), 6) for v in values]))
 
     # Sort contributions by absolute magnitude
@@ -215,9 +238,18 @@ def compute_global_importance() -> dict[str, Any]:
         - ``sample_size``: how many background samples were used
     """
     background = _load_background_data()
-    explainer = _get_explainer()
+    model = ModelRegistry.instance().get_model()
 
-    shap_values = explainer.shap_values(background)
+    if hasattr(model, "named_steps") and "preprocessor" in model.named_steps:
+        preprocessor = model.named_steps["preprocessor"]
+        preprocessed_bg = preprocessor.transform(background)
+        if hasattr(preprocessed_bg, "toarray"):
+            preprocessed_bg = preprocessed_bg.toarray()
+    else:
+        preprocessed_bg = background
+
+    explainer = _get_explainer()
+    shap_values = explainer.shap_values(preprocessed_bg)
 
     # Handle binary classifier output
     if isinstance(shap_values, list):
@@ -227,7 +259,7 @@ def compute_global_importance() -> dict[str, Any]:
     else:
         values = np.array(shap_values)
 
-    feature_names = _feature_names or list(background.columns)
+    feature_names = _feature_names or [f"Feature_{i}" for i in range(values.shape[1])]
     mean_abs_shap = np.mean(np.abs(values), axis=0)
 
     importance = sorted(

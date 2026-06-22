@@ -51,9 +51,12 @@ def run_lifecycle():
         if compare_models():
             print("Challenger wins - promoting model.")
 
-            latest_version = sorted(
-                Path(CONFIG["paths"]["experiments_dir"]).glob("churn_model_*")
-            )[-1].name
+            import re
+            pattern = re.compile(r"^churn_model_\d{8}_\d{6}$")
+            latest_version = sorted([
+                d for d in Path(CONFIG["paths"]["experiments_dir"]).glob("churn_model_*")
+                if d.is_dir() and pattern.match(d.name) and (d / "metadata.json").exists()
+            ])[-1].name
 
             promote_model(latest_version)
         else:

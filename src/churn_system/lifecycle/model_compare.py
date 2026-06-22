@@ -7,6 +7,7 @@ and feature schema compatibility checks.
 """
 
 import json
+import re
 from pathlib import Path
 
 from churn_system.config.config import CONFIG
@@ -23,7 +24,11 @@ def get_latest_experiment():
     """
     Return latest experiment directory based on naming order.
     """
-    versions = sorted(EXPERIMENTS_DIR.glob("churn_model_*"))
+    pattern = re.compile(r"^churn_model_\d{8}_\d{6}$")
+    versions = sorted([
+        d for d in EXPERIMENTS_DIR.glob("churn_model_*")
+        if d.is_dir() and pattern.match(d.name) and (d / "metadata.json").exists()
+    ])
     return versions[-1] if versions else None
 
 

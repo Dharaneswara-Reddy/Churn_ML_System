@@ -47,7 +47,7 @@ def rollback_if_needed():
     previous_model = lineage[-2]["model_version"]
 
     experiments_dir = Path(CONFIG["paths"]["experiments_dir"])
-    production_dir = Path(CONFIG["paths"]["production_model"]).parent / "current"
+    production_dir = Path(CONFIG["paths"]["production_model"]).parent
 
     source = experiments_dir / previous_model
 

@@ -34,7 +34,12 @@ def experiment_dir(version: str, config: dict[str, Any] | None = None) -> Path:
 
 
 def latest_experiment_dir(config: dict[str, Any] | None = None) -> Path | None:
-    versions = sorted(experiments_dir(config).glob("churn_model_*"))
+    import re
+    pattern = re.compile(r"^churn_model_\d{8}_\d{6}$")
+    versions = sorted([
+        d for d in experiments_dir(config).glob("churn_model_*")
+        if d.is_dir() and pattern.match(d.name) and (d / "metadata.json").exists()
+    ])
     return versions[-1] if versions else None
 
 
