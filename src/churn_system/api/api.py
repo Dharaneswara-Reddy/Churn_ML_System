@@ -39,6 +39,8 @@ from churn_system.events.predictions import store_prediction_event
 from churn_system.features.build_features import build_features
 from churn_system.logging.logger import get_logger
 from churn_system.observability.metrics import (
+    EXPLANATION_LATENCY_SECONDS,
+    EXPLANATION_REQUESTS_TOTAL,
     INFERENCE_ERRORS_TOTAL,
     REQUEST_LATENCY_SECONDS,
     REQUESTS_TOTAL,
@@ -412,3 +414,132 @@ async def predict_get_help():
         "message": "Use POST /predict with JSON body.",
         "hint": "Open /docs for the interactive request form.",
     }
+
+
+# ---------------------------------------------------------------------------
+# Explainable AI endpoint
+# ---------------------------------------------------------------------------
+@app.post("/explain")
+@limiter.limit(_rate_limit())
+async def explain(
+    request: Request,
+    payload: RequestModel,
+    _: None = Depends(verify_api_key),
+):
+    """
+    Return SHAP-based feature explanations for a single prediction.
+
+    Explains WHY the model predicted a specific churn probability by
+    returning per-feature SHAP contributions, top positive drivers
+    (pushing toward churn), and top negative drivers (pushing away).
+    """
+    from churn_system.explainability.shap_explainer import explain_prediction
+
+    request_id = uuid.uuid4().hex
+    start_time = time.time()
+    EXPLANATION_REQUESTS_TOTAL.inc()
+
+    logger.info("Explanation request | request_id=%s", request_id)
+
+    try:
+        row = payload.model_dump()
+        result = await asyncio.to_thread(explain_prediction, row)
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=ErrorBody(
+                error_code="explainer_not_ready",
+                message="Training reference data not available",
+                detail=str(e),
+            ).model_dump(),
+        ) from e
+    except Exception as e:
+        logger.exception("Explanation failed | request_id=%s", request_id)
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorBody(
+                error_code="explanation_error",
+                message="Failed to generate explanation",
+                detail=None,
+            ).model_dump(),
+        ) from e
+
+    latency = time.time() - start_time
+    EXPLANATION_LATENCY_SECONDS.observe(latency)
+
+    logger.info(
+        "Explanation complete | request_id=%s | latency=%.4fs",
+        request_id,
+        latency,
+    )
+
+    return {
+        "request_id": request_id,
+        **result,
+        "latency_seconds": round(latency, 4),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Global feature importance endpoint
+# ---------------------------------------------------------------------------
+@app.get("/explain/global")
+async def global_importance():
+    """
+    Return global SHAP feature importance (mean |SHAP| across background data).
+    """
+    from churn_system.explainability.shap_explainer import compute_global_importance
+
+    try:
+        result = await asyncio.to_thread(compute_global_importance)
+    except Exception as e:
+        logger.exception("Global importance computation failed")
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorBody(
+                error_code="global_importance_error",
+                message="Failed to compute global feature importance",
+                detail=None,
+            ).model_dump(),
+        ) from e
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Monitoring dashboard endpoint
+# ---------------------------------------------------------------------------
+@app.get("/monitoring/dashboard")
+async def monitoring_dashboard():
+    """
+    Returns a consolidated view of all monitoring metrics.
+
+    Aggregates data quality reports, calibration reports, drift status,
+    and model health into a single JSON response for dashboarding.
+    """
+    import json
+    from pathlib import Path
+
+    monitoring_dir = Path(CONFIG["paths"]["monitoring_dir"])
+    dashboard = {"available_reports": []}
+
+    report_files = {
+        "data_quality": monitoring_dir / "data_quality_report.json",
+        "calibration": monitoring_dir / "calibration_report.json",
+        "prediction": monitoring_dir / "prediction_report.json",
+        "health": monitoring_dir / "health_report.json",
+    }
+
+    for name, path in report_files.items():
+        if path.exists():
+            with open(path) as f:
+                dashboard[name] = json.load(f)
+            dashboard["available_reports"].append(name)
+        else:
+            dashboard[name] = None
+
+    # Add model registry info
+    registry_info = ModelRegistry.instance().get_info()
+    dashboard["model_info"] = registry_info
+
+    return dashboard
