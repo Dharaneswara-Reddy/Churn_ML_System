@@ -70,6 +70,26 @@ def _load_background_data() -> pd.DataFrame:
     df = build_features(df, training=False)
     df = validate_inference_data(df)
 
+    # Coerce column types based on metadata json to prevent auto-inference mismatches (e.g. Zip Code becoming int64)
+    try:
+        import json
+        model_path = Path(CONFIG["paths"]["production_model"])
+        metadata_path = model_path.parent / "metadata.json"
+        if metadata_path.exists():
+            with open(metadata_path, "r") as mf:
+                meta = json.load(mf)
+            feature_types = meta.get("feature_types", {})
+            for col, t in feature_types.items():
+                if col in df.columns:
+                    if t == "str":
+                        df[col] = df[col].astype(str)
+                    elif t == "int":
+                        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+                    elif t == "float":
+                        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0).astype(float)
+    except Exception as e:
+        logger.warning("Failed to cast background columns: %s", e)
+
     # Take a stratified sample to keep the background set manageable
     if len(df) > BACKGROUND_SAMPLE_SIZE:
         df = df.sample(n=BACKGROUND_SAMPLE_SIZE, random_state=42)
