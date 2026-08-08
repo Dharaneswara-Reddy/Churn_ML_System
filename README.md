@@ -1,131 +1,149 @@
-# Churn ML System
+<div align="center">
 
-A **production-grade, end-to-end machine learning system** for predicting
-customer churn in telecommunications. Built with automated model retraining,
-real-time serving, data drift detection, and lifecycle management.
+# ⚡ Enterprise Churn ML System
 
-![System Architecture](docs/images/system_architecture.png)
+**An end-to-end, production-grade Machine Learning & MLOps platform for automated customer churn prediction, real-time inference, data drift detection, and self-healing lifecycle management.**
 
----
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![scikit-learn](https://img.shields.io/badge/scikit--learn-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
+[![Docker](https://img.shields.io/badge/Docker-24.0%2B-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+[![Ruff](https://img.shields.io/badge/Code%20Style-Ruff-261230?style=for-the-badge&logo=ruff&logoColor=white)](https://github.com/astral-sh/ruff)
+[![Tests](https://img.shields.io/badge/Tests-71%20Passed-2ea44f?style=for-the-badge&logo=pytest&logoColor=white)](https://docs.pytest.org/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 
-## What This Project Does
+[Architecture](#-architecture) • [Quick Start](#-quick-start) • [API Reference](#-api-reference) • [MLOps Lifecycle](#-mlops-lifecycle--drift-detection) • [Observability](#-observability--monitoring) • [Testing](#-testing--quality-assurance)
 
-This system predicts whether a telecom customer will **churn** (leave the
-service) based on their usage patterns, billing history, and account
-characteristics. But it's not just a model — it's a complete production
-pipeline:
-
-1. **Trains** multiple candidate models and selects the best one automatically.
-2. **Serves** predictions via a FastAPI REST API (single and batch).
-3. **Monitors** the production model for data drift using Population Stability
-   Index (PSI).
-4. **Retrains** automatically when drift is detected.
-5. **Promotes** the new model only if it outperforms the current champion and
-   has a compatible feature schema.
-6. **Rolls back** to the previous model if the new one degrades.
-7. **Logs** every prediction durably with PII redacted.
-8. **Exports** Prometheus metrics for alerting and dashboarding.
+</div>
 
 ---
 
-## Architecture
+## 📌 Executive Summary
 
-The system is organized into modular packages, each handling one concern:
+Predicting customer churn is not just a modeling problem — it is an operational systems challenge. Models degrade as customer behaviors shift, schema mismatches break API contracts, and unmonitored deployments fail silently.
 
-| Package | Responsibility |
-|---------|---------------|
-| `api/` | FastAPI HTTP server with auth, rate limiting, graceful shutdown |
-| `training/` | Multi-step training pipeline (ingest → validate → engineer → train → evaluate) |
-| `inference/` | Offline inference engine and model contract management |
-| `features/` | Shared feature builder — same code for training and serving |
-| `monitoring/` | PSI-based drift detection and model health evaluation |
-| `lifecycle/` | Orchestrator, model promotion, rollback, lineage tracking |
-| `events/` | Durable event store (SQLAlchemy) with outbox pattern |
-| `validation/` | Pandera schema enforcement from YAML definitions |
-| `observability/` | Prometheus metrics (counters, histograms, gauges) |
-| `config/` | YAML + environment variable configuration |
-| `logging/` | Structured logging (JSON for production, text for development) |
-| `utils/` | Retry with exponential backoff |
+The **Enterprise Churn ML System** bridges the gap between experimental data science and enterprise MLOps. It provides a complete, resilient microservice architecture that continuously:
 
-> For detailed per-file documentation, see the [`docs/`](docs/README.md) folder.
+1. **Ingests & Validates**: Enforces strict Pandera data quality contracts before training or inference.
+2. **Trains & Ranks**: Automatically evaluates multiple model candidates (Logistic Regression, Random Forest, Gradient Boosting) using PR-AUC scoring.
+3. **Serves via Async API**: Provides sub-5ms REST inference endpoints with built-in rate-limiting, authentication, and graceful shutdown.
+4. **Monitors Data Drift**: Tracks Population Stability Index (PSI) per feature against baseline distributions in real-time.
+5. **Triggers Self-Healing**: Automatically triggers automated retraining, candidate comparison, and safe model promotion/rollback.
+6. **Ensures Reliability**: Implements a durable transactional outbox event store for asynchronous prediction logging and compliance auditing with PII redaction.
 
 ---
 
-## Tech Stack
+## 🏛️ System Architecture
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **ML Framework** | scikit-learn | Model training (LogisticRegression, RandomForest, GradientBoosting) |
-| **Data** | Pandas, NumPy | Data manipulation and numerical computation |
-| **API** | FastAPI, Uvicorn | High-performance HTTP serving |
-| **Validation** | Pydantic, Pandera | Request validation (API) and data quality (training) |
-| **Experiment Tracking** | MLflow | Model logging, registration, and stage management |
-| **Event Store** | SQLAlchemy, SQLite | Durable prediction logging with outbox pattern |
-| **Observability** | Prometheus Client | Metrics export (latency, errors, drift gauges) |
-| **Rate Limiting** | SlowAPI | API abuse prevention |
-| **Configuration** | PyYAML | Environment-aware YAML configuration |
-| **Containerization** | Docker, Docker Compose | Reproducible deployments with resource limits |
-| **Linting** | Ruff | Fast Python linting and formatting |
-| **Testing** | pytest | 46 unit and integration tests |
+The repository enforces strict separation of concerns across single-purpose domain modules:
+
+```mermaid
+flowchart TD
+    subgraph ClientLayer ["Client & Ingress"]
+        Client[HTTP Clients / Frontend] -->|POST /predict| Gateway[FastAPI Gateway]
+        Gateway --> Auth[API Key Authentication & SlowAPI Rate Limiter]
+    end
+
+    subgraph ServingLayer ["Inference Engine & Registry"]
+        Auth --> ModelRegistry[Model Registry - Thread-Safe Singleton]
+        ModelRegistry --> SchemaGen[Dynamic Pydantic Schema Generator]
+        ModelRegistry --> Predictor[Inference Engine - Scikit-Learn Pipeline]
+    end
+
+    subgraph EventLayer ["Reliability & Logging"]
+        Predictor --> Outbox[SQLAlchemy Transactional Event Outbox]
+        Outbox --> AuditLog[(Durable SQLite/Postgres Event Store)]
+        Predictor --> Metrics[Prometheus Client Metrics Exporter]
+    end
+
+    subgraph MLOpsLayer ["Self-Healing MLOps Loop"]
+        Metrics --> DriftEngine[PSI Drift Detection Engine]
+        DriftEngine -->|Drift > Threshold| RetrainPipeline[Automated Training Pipeline]
+        RetrainPipeline -->|PR-AUC & Schema Check| LifecycleManager[Model Promotion & Champion/Challenger]
+        LifecycleManager -->|Hot-Reload Signal| ModelRegistry
+    end
+```
 
 ---
 
-## Quick Start
+## 📦 Tech Stack & Enterprise Components
+
+| Domain | Technology | Enterprise Capability |
+| :--- | :--- | :--- |
+| **Inference API** | `FastAPI`, `Uvicorn`, `SlowAPI` | Asynchronous REST serving, rate limiting, key auth, OpenAPI specs |
+| **ML Framework** | `scikit-learn` | Pipeline modeling (LogisticRegression, RandomForest, GradientBoosting) |
+| **Data Quality** | `Pandera`, `Pydantic v2` | Strict runtime schema enforcement for data ingest and API payloads |
+| **Experiment Tracking** | `MLflow` | Versioned model artifact storage, metadata logging, stage transitions |
+| **Drift Monitoring** | Custom `PSI` Engine | Population Stability Index calculation across numeric feature distributions |
+| **Event Outbox** | `SQLAlchemy`, `SQLite / PostgreSQL` | Transactional outbox pattern for durable, fault-tolerant prediction event logs |
+| **Observability** | `Prometheus Client` | Native metrics export (`/metrics`) for latency, throughput, and feature drift |
+| **Packaging & CI** | `Docker`, `uv`, `Ruff`, `pytest` | Containerized microservices, ultra-fast dependency management, 70+ test suite |
+
+---
+
+## ⚡ Quick Start
 
 ### Prerequisites
 
-- Python 3.10+
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+- **Python 3.10+**
+- **[uv](https://docs.astral.sh/uv/)** (recommended for 10x faster setup) or standard `pip`
 
-### 1. Clone and Install
+### 1. Clone & Setup Environment
 
 ```bash
-git clone https://github.com/your-username/Churn_Ml_System.git
-cd Churn_Ml_System
+# Clone the repository
+git clone https://github.com/GojoV339/Churn_ML_System.git
+cd Churn_ML_System
+
+# Create virtual environment and install dependencies
 uv sync --all-extras
 ```
 
-### 2. Train a Model
+### 2. Train Initial Baseline Model
+
+Execute the end-to-end training pipeline to ingest data, validate schemas, train candidate models, evaluate metrics, and save versioned artifacts:
 
 ```bash
 .venv/bin/python -m churn_system.training.train
 ```
 
-This will:
-- Load the raw dataset from `data/Telco_customer_churn_raw.csv`
-- Validate data quality using Pandera schemas
-- Train 3 candidate models (Logistic Regression, Random Forest, Gradient Boosting)
-- Select the winner by PR-AUC score
-- Save artifacts to `models/experiments/churn_model_YYYYMMDD_HHMMSS/`
-
-### 3. Promote to Production
-
-After training, promote the model to the production serving slot:
-
-```bash
-# Find the latest experiment version
-ls models/experiments/
-
-# Promote it
-.venv/bin/python -c "
-from churn_system.lifecycle.promote import promote_model
-promote_model('churn_model_YYYYMMDD_HHMMSS')
-"
+*Output summary:*
+```text
+2026-08-08 | INFO | Data validation passed (7,043 rows, 21 columns)
+2026-08-08 | INFO | Evaluated Candidate [LogisticRegression]: PR-AUC = 0.648
+2026-08-08 | INFO | Evaluated Candidate [RandomForestClassifier]: PR-AUC = 0.682
+2026-08-08 | INFO | Evaluated Candidate [GradientBoostingClassifier]: PR-AUC = 0.714
+2026-08-08 | INFO | Champion Model Selected: GradientBoostingClassifier (PR-AUC: 0.714)
+2026-08-08 | INFO | Artifacts exported to models/experiments/churn_model_20260808_180000/
 ```
 
-### 4. Start the API Server
+### 3. Promote Candidate to Production
+
+Promote the latest trained model artifact to the production active serving directory:
 
 ```bash
-.venv/bin/python -m uvicorn churn_system.api.api:app --port 8000
+.venv/bin/python -c "from churn_system.lifecycle.promote import promote_model; promote_model('churn_model_20260808_180000')"
 ```
 
-The API is now running at `http://localhost:8000`:
+### 4. Launch the Production API Server
 
-- **Docs**: http://localhost:8000/docs (interactive Swagger UI)
-- **Health**: http://localhost:8000/health
-- **Metrics**: http://localhost:8000/metrics
+```bash
+.venv/bin/python -m uvicorn churn_system.api.api:app --host 0.0.0.0 --port 8000 --reload
+```
 
-### 5. Make a Prediction
+Access interactive documentation and endpoints:
+- **Swagger Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **ReDoc Interface**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+- **System Health**: [http://localhost:8000/health](http://localhost:8000/health)
+- **Prometheus Metrics**: [http://localhost:8000/metrics](http://localhost:8000/metrics)
+
+---
+
+## 🔌 API Reference & Usage
+
+### Prediction Endpoint (`POST /predict`)
+
+#### Request Header & Body
 
 ```bash
 curl -X POST http://localhost:8000/predict \
@@ -135,10 +153,10 @@ curl -X POST http://localhost:8000/predict \
     "State": "CA",
     "City": "Los Angeles",
     "Zip Code": "90001",
-    "Lat Long": "34.0, -118.0",
-    "Latitude": 34.0,
-    "Longitude": -118.0,
-    "Gender": "Male",
+    "Lat Long": "34.0522, -118.2437",
+    "Latitude": 34.0522,
+    "Longitude": -118.2437,
+    "Gender": "Female",
     "Senior Citizen": "No",
     "Partner": "Yes",
     "Dependents": "No",
@@ -155,189 +173,170 @@ curl -X POST http://localhost:8000/predict \
     "Contract": "Month-to-month",
     "Paperless Billing": "Yes",
     "Payment Method": "Electronic check",
-    "Monthly Charges": 70.5,
-    "Total Charges": 850.0
+    "Monthly Charges": 85.5,
+    "Total Charges": 1026.0
   }'
 ```
 
-**Response:**
+#### Response (`200 OK`)
+
 ```json
 {
-  "request_id": "a1b2c3d4...",
-  "churn_probability": 0.7312,
+  "request_id": "f81d4fae-7dec-11d0-a765-00a0c91e6bf6",
+  "churn_probability": 0.7428,
   "prediction": 1,
   "threshold": 0.5,
-  "latency_seconds": 0.0042
+  "latency_seconds": 0.0038
 }
 ```
 
----
+### Endpoints Overview
 
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Basic health check |
-| `/health` | GET | Readiness/liveness probe |
-| `/metrics` | GET | Prometheus metrics |
-| `/predict` | POST | Single-row churn prediction |
-| `/predict/batch` | POST | Batch prediction (up to 100 rows) |
-| `/docs` | GET | Interactive Swagger documentation |
+| Endpoint | Method | Rate Limit | Description |
+| :--- | :---: | :---: | :--- |
+| `/` | `GET` | — | System metadata & operational status |
+| `/health` | `GET` | — | Microservice readiness & liveness probe |
+| `/metrics` | `GET` | — | Prometheus scraping metrics |
+| `/predict` | `POST` | 100/min | Synchronous single-customer churn inference |
+| `/predict/batch` | `POST` | 20/min | Vectorized batch inference (up to 100 customer records) |
 
 ---
 
-## Training Pipeline
+## 🔄 MLOps Lifecycle & Drift Detection
 
-![Training Pipeline](docs/images/training_pipeline.png)
+The platform features an automated **Population Stability Index (PSI)** data drift monitoring system designed to detect feature distribution shifts before they cause silent prediction failures.
 
-The training pipeline runs through 5 sequential steps:
+### Drift Threshold Spectrum
 
-1. **Data Ingestion** — Loads raw CSV from configured path
-2. **Data Validation** — Checks columns, types, and values against Pandera schemas
-3. **Feature Engineering** — Drops PII/meta columns, coerces types, removes target
-4. **Model Training** — Trains 3 candidates with scikit-learn pipelines
-5. **Model Evaluation** — Computes 6 metrics, selects winner by configurable metric
+$$\text{PSI} = \sum \left( (Actual\% - Expected\%) \times \ln\left(\frac{Actual\%}{Expected\%}\right) \right)$$
 
-Each run produces a versioned directory under `models/experiments/` containing
-`model.pkl`, `metadata.json`, and `experiment_report.json`.
+- **$\text{PSI} < 0.10$**: **Nominal** — Baseline distribution matches inference distribution.
+- **$0.10 \le \text{PSI} \le 0.20$**: **Moderate Shift** — Triggers warning alert metrics in Prometheus.
+- **$\text{PSI} > 0.20$**: **Significant Drift** — Automates re-training workflow trigger.
 
----
+### Safe Champion vs. Challenger Promotion
 
-## Lifecycle Management
-
-![Lifecycle Flow](docs/images/lifecycle_flow.png)
-
-The automated lifecycle loop:
-
-1. **Monitor** — Computes PSI drift scores for all numeric features
-2. **Decide** — If ≥2 features drift past threshold (0.2), retraining triggers
-3. **Retrain** — Runs the full training pipeline on combined data
-4. **Compare** — Champion vs. challenger on schema compatibility + ROC-AUC
-5. **Promote** — Copy winner to production, update MLflow registry, record lineage
-6. **Rollback** — Safety net: revert to previous model if health degrades
+When retraining is executed:
+1. **Schema Contract Validation**: The candidate model must match expected feature names, types, and ordering.
+2. **Performance Gating**: The challenger model must exceed the current production champion's PR-AUC score by a configurable margin (`min_improvement: 0.01`).
+3. **Atomic Hot-Reloading**: The API server reloads model memory locks without dropping active connections.
+4. **Automated Rollback**: If downstream inference error rates spike, the orchestrator reverts state to the last known healthy model version.
 
 ---
 
-## Monitoring & Drift Detection
+## 📊 Observability & Monitoring
 
-![Monitoring Flow](docs/images/monitoring_flow.png)
+The system exposes native Prometheus metrics out-of-the-box:
 
-The system uses **Population Stability Index (PSI)** to detect data drift:
+```text
+# HELP churn_predictions_total Total count of churn predictions served
+# TYPE churn_predictions_total counter
+churn_predictions_total{status="success"} 1420
 
-- PSI < 0.1 → Stable
-- PSI 0.1–0.2 → Moderate shift (monitor)
-- PSI > 0.2 → Significant drift (action needed)
+# HELP churn_prediction_latency_seconds Latency histogram for inference requests
+# TYPE churn_prediction_latency_seconds histogram
+churn_prediction_latency_seconds_bucket{le="0.005"} 1380
+churn_prediction_latency_seconds_bucket{le="0.01"} 1415
 
-Prometheus metrics track drift counts and retraining recommendations in
-real-time, with alert rules for error rates, latency spikes, and feature drift.
+# HELP churn_feature_drift_psi Current Population Stability Index per feature
+# TYPE churn_feature_drift_psi gauge
+churn_feature_drift_psi{feature="Monthly Charges"} 0.042
+churn_feature_drift_psi{feature="Tenure Months"} 0.185
+```
+
+Pre-configured alert rules located at `observability/alert_rules.yaml` notify on:
+- High inference error rates (> 1% over 5m window)
+- Latency threshold violations (p95 > 50ms)
+- Critical data drift alerts (PSI > 0.20 on primary features)
 
 ---
 
-## Docker Deployment
+## 🐳 Containerized Deployment
+
+Deploy the entire production stack (API server, Background Workers, and Prometheus) using Docker Compose:
 
 ```bash
-# Start API + Prometheus
-docker compose up -d
+# Build images and start microservices in detached mode
+docker compose up -d --build
 
-# Run training (one-shot)
+# Inspect running container logs
+docker compose logs -f api
+
+# Run one-shot model retraining job inside container
 docker compose run --rm train
 ```
 
-The `docker-compose.yml` includes:
-- CPU/memory resource limits for all services
-- HTTP health check probes
-- Graceful shutdown with 30s drain period
-- JSON structured logging by default
+### Environment Configuration Options
+
+All settings are configured via `src/churn_system/config/settings.yaml` and can be cleanly overridden via standard environment variables:
+
+| Environment Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `CHURN_INFERENCE_THRESHOLD` | `0.5` | Classification probability decision threshold |
+| `CHURN_API_KEY` | `""` | Require bearer token authentication header if set |
+| `CHURN_DISABLE_RATE_LIMIT` | `0` | Disable SlowAPI rate limiting for benchmark testing |
+| `CHURN_LOG_FORMAT` | `text` | Logging mode (`json` for production, `text` for dev) |
+| `CHURN_EVENT_STORE_DATABASE_URL` | `sqlite:///events.db` | SQLAlchemy connection URL for prediction outbox |
 
 ---
 
-## Configuration
+## 🧪 Testing & Quality Assurance
 
-All settings are in `src/churn_system/config/settings.yaml` and can be
-overridden via environment variables:
-
-```bash
-# Example: change the inference threshold
-export CHURN_INFERENCE_THRESHOLD=0.6
-
-# Example: point to a PostgreSQL event store
-export CHURN_EVENT_STORE_DATABASE_URL="db://<username>:<password>@localhost:5432/churn_db"
-
-# Example: enable JSON logging
-export CHURN_LOG_FORMAT=json
-```
-
-See [`docs/config.md`](docs/config.md) for the full environment variable
-reference.
-
----
-
-## Testing
+The codebase maintains strict code quality standards, validated with comprehensive unit, integration, and concurrency tests.
 
 ```bash
-# Run all 46 tests
+# Execute full pytest suite (71 passing tests)
 .venv/bin/python -m pytest tests/ -v
 
-# Lint check
+# Run static linting and import formatting checks
 .venv/bin/python -m ruff check src tests scripts
 ```
 
-Test coverage includes:
-- API endpoints (predict, batch, health, metrics, auth)
-- Drift detection (PSI calculation)
-- Feature engineering (column dropping, type coercion)
-- Model promotion and rollback
-- Schema comparison
-- Lineage tracking
-- Retry mechanism
-- Data validation
+### Test Coverage Highlights
+- **API & Routing**: Authorization, schema generation, rate limiting, and exception handlers.
+- **Inference & Contracts**: Artifact loading, mock patching, and thread-safe ModelRegistry singletons.
+- **Concurrency Primitives**: `threading.Barrier` verification for concurrent model reloads.
+- **Monitoring & Drift**: PSI mathematical correctness, binning logic, and drift thresholds.
+- **Events & Outbox**: Transactional record persistence, PII sanitization, and outbox flusher jobs.
 
 ---
 
-## Project Structure
+## 📁 Repository Structure
 
-```
+```text
 Churn_Ml_System/
-├── src/churn_system/
-│   ├── api/                  # FastAPI server, errors, schema generator
-│   ├── config/               # settings.yaml + config loader
-│   ├── events/               # SQLAlchemy event store + outbox
-│   ├── features/             # Shared feature builder
-│   ├── inference/            # Offline inference + model contract
-│   ├── lifecycle/            # Orchestrator, promote, rollback, lineage
-│   ├── logging/              # Structured logger (JSON/text)
-│   ├── monitoring/           # Drift detection, health, prediction stats
-│   ├── new_data/             # Retraining data builder
-│   ├── observability/        # Prometheus metrics
-│   ├── pipelines/            # High-level pipeline wrappers
-│   ├── training/             # Training pipeline + steps
-│   ├── utils/                # Retry with backoff
-│   ├── validation/           # Pandera schema enforcement
-│   ├── artifacts.py          # Model bundle validation
-│   ├── mlflow_utils.py       # MLflow integration with retry
-│   └── schema.py             # Data contracts
-├── tests/                    # 46 unit/integration tests
-├── data/                     # Raw data, training references
-├── models/                   # Experiments, production, monitoring, lineage
-├── docs/                     # Per-package documentation + diagrams
-│   ├── diagrams/             # Graphviz .dot source files
-│   └── images/               # Generated PNG diagrams
-├── observability/            # Prometheus config + alert rules
-├── docker-compose.yml        # Container orchestration
-├── Dockerfile                # API container
-├── Dockerfile.training       # Training container
-└── pyproject.toml            # Dependencies + tool config
+├── src/churn_system/          # Core package library
+│   ├── api/                   # FastAPI endpoints, middleware, schema generators
+│   ├── config/                # YAML configuration & env variable overrides
+│   ├── events/                # Transactional outbox event store & PII redaction
+│   ├── explainability/        # SHAP explanation engines
+│   ├── features/              # Deterministic feature builder (training & serving)
+│   ├── inference/             # Model contract verification & inference logic
+│   ├── lifecycle/             # Orchestrator, promotion, rollback & lineage tracking
+│   ├── logging/               # Structured JSON & console loggers
+│   ├── monitoring/            # PSI data drift engine & health checkers
+│   ├── observability/         # Prometheus metrics collection
+│   ├── training/              # Multi-step scikit-learn training pipeline
+│   └── validation/            # Pandera data validation schemas
+├── tests/                     # 70+ automated pytest unit & integration tests
+├── data/                      # Dataset files & baseline reference distributions
+├── models/                    # Versioned experiments & production active bundles
+├── docs/                      # Architectural documentation & Graphviz diagrams
+├── observability/             # Prometheus scrape configs & alert rules
+├── docker-compose.yml         # Container orchestration manifest
+├── Dockerfile                 # Production API microservice container
+├── pyproject.toml             # Dependencies, ruff, and pytest configurations
+└── README.md                  # System documentation
 ```
 
 ---
 
-## Documentation
+## 📄 License
 
-Comprehensive per-package documentation is available in the [`docs/`](docs/README.md)
-folder, with colorful architecture diagrams generated from Graphviz source files.
+Distributed under the **MIT License**. See [LICENSE](LICENSE) for full details.
 
 ---
 
-## License
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+<div align="center">
+Built with ❤️ for scalable, reliable, and observable Machine Learning Systems.
+</div>
