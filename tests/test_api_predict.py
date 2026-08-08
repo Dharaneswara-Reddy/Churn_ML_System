@@ -13,7 +13,6 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-
 # ---------------------------------------------------------------------------
 # Fake model metadata so the API module can be imported without a real
 # model bundle on disk (CI environments don't have models/production/).
