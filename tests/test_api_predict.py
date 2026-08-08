@@ -49,14 +49,19 @@ _FAKE_METADATA = {
 
 
 def _patch_model_contract(monkeypatch):
-    """Patch model contract loader so api.py can be imported without real artifacts."""
+    """Patch model contract loader so api.py can be imported and executed without real artifacts."""
     import churn_system.inference.model_contract as mc
 
     mc.load_model_contract.cache_clear()
+    monkeypatch.setattr(mc, "load_model_contract", lambda: _FAKE_METADATA)
 
     import churn_system.api.schema_generator as sg
 
     monkeypatch.setattr(sg, "load_model_contract", lambda: _FAKE_METADATA)
+
+    import churn_system.events.predictions as ep
+
+    monkeypatch.setattr(ep, "load_model_contract", lambda: _FAKE_METADATA)
 
 
 @pytest.fixture

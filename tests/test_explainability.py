@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
+
+pytest.importorskip("shap")
 
 from churn_system.explainability.shap_explainer import (
     explain_prediction,
