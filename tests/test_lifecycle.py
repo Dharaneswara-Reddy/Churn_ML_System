@@ -21,7 +21,7 @@ def model_dirs(tmp_path, monkeypatch):
     experiments_dir.mkdir(parents=True)
 
     monkeypatch.setitem(cfg.CONFIG["paths"], "experiments_dir", str(experiments_dir))
-    monkeypatch.setitem(cfg.CONFIG["paths"], "production_model", str(production_dir / "model.pkl"))
+    monkeypatch.setitem(cfg.CONFIG["paths"], "production_model", str(production_dir / "current" / "model.pkl"))
 
     return experiments_dir, production_dir
 

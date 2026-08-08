@@ -29,10 +29,9 @@ def promote_model(version: str):
     """
 
     experiments_dir = Path(CONFIG["paths"]["experiments_dir"])
-    production_dir = Path(CONFIG["paths"]["production_model"]).parent
+    target = Path(CONFIG["paths"]["production_model"]).parent
 
     source = experiments_dir / version
-    target = production_dir / "current"
 
     if not source.exists():
         raise ValueError(f"Model version {version} does not exist.")
