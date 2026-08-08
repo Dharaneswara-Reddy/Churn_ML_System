@@ -37,14 +37,21 @@ class TestTrainSingleCandidate:
 
         from sklearn.linear_model import LogisticRegression
 
-        with caplog.at_level("INFO"):
-            _train_single_candidate(
-                "test_lr",
-                LogisticRegression(max_iter=100, random_state=42),
-                X,
-                y,
-            )
-        assert any("Training candidate" in r.message for r in caplog.records)
+        from churn_system.training.steps.model_training import logger as mt_logger
+
+        old_propagate = mt_logger.propagate
+        mt_logger.propagate = True
+        try:
+            with caplog.at_level("INFO"):
+                _train_single_candidate(
+                    "test_lr",
+                    LogisticRegression(max_iter=100, random_state=42),
+                    X,
+                    y,
+                )
+            assert any("Training candidate" in r.message for r in caplog.records)
+        finally:
+            mt_logger.propagate = old_propagate
 
 
 class TestConcurrentTraining:
