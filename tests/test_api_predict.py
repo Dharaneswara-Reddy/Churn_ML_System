@@ -14,10 +14,57 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+# ---------------------------------------------------------------------------
+# Fake model metadata so the API module can be imported without a real
+# model bundle on disk (CI environments don't have models/production/).
+# ---------------------------------------------------------------------------
+_FAKE_METADATA = {
+    "feature_schema": [
+        "Country", "State", "City", "Zip Code", "Lat Long",
+        "Latitude", "Longitude", "Gender", "Senior Citizen",
+        "Partner", "Dependents", "Tenure Months", "Phone Service",
+        "Multiple Lines", "Internet Service", "Online Security",
+        "Online Backup", "Device Protection", "Tech Support",
+        "Streaming TV", "Streaming Movies", "Contract",
+        "Paperless Billing", "Payment Method", "Monthly Charges",
+        "Total Charges",
+    ],
+    "feature_count": 26,
+    "metrics": {},
+    "feature_types": {
+        "Country": "str", "State": "str", "City": "str",
+        "Zip Code": "str", "Lat Long": "str",
+        "Latitude": "float", "Longitude": "float",
+        "Gender": "str", "Senior Citizen": "str",
+        "Partner": "str", "Dependents": "str",
+        "Tenure Months": "int", "Phone Service": "str",
+        "Multiple Lines": "str", "Internet Service": "str",
+        "Online Security": "str", "Online Backup": "str",
+        "Device Protection": "str", "Tech Support": "str",
+        "Streaming TV": "str", "Streaming Movies": "str",
+        "Contract": "str", "Paperless Billing": "str",
+        "Payment Method": "str", "Monthly Charges": "float",
+        "Total Charges": "float",
+    },
+}
+
+
+def _patch_model_contract(monkeypatch):
+    """Patch model contract loader so api.py can be imported without real artifacts."""
+    import churn_system.inference.model_contract as mc
+
+    mc.load_model_contract.cache_clear()
+
+    import churn_system.api.schema_generator as sg
+
+    monkeypatch.setattr(sg, "load_model_contract", lambda: _FAKE_METADATA)
+
+
 @pytest.fixture
 def api_module(monkeypatch):
     monkeypatch.setenv("CHURN_DISABLE_RATE_LIMIT", "1")
     monkeypatch.delenv("CHURN_API_KEY", raising=False)
+    _patch_model_contract(monkeypatch)
     import churn_system.api.api as api_mod
 
     importlib.reload(api_mod)
@@ -90,6 +137,7 @@ def test_predict_rejects_extra_field(api_module, monkeypatch):
 def test_predict_requires_api_key_when_set(monkeypatch):
     monkeypatch.setenv("CHURN_DISABLE_RATE_LIMIT", "1")
     monkeypatch.setenv("CHURN_API_KEY", "secret")
+    _patch_model_contract(monkeypatch)
     import churn_system.api.api as api_mod
 
     importlib.reload(api_mod)
