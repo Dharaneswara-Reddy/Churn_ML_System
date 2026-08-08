@@ -208,7 +208,7 @@ The platform features an automated **Population Stability Index (PSI)** data dri
 
 ### Drift Threshold Spectrum
 
-$$\text{PSI} = \sum \left( (Actual\% - Expected\%) \times \ln\left(\frac{Actual\%}{Expected\%}\right) \right)$$
+$$\text{PSI} = \sum \left( (P_{\text{actual}} - P_{\text{expected}}) \times \ln\left(\frac{P_{\text{actual}}}{P_{\text{expected}}}\right) \right)$$
 
 - **$\text{PSI} < 0.10$**: **Nominal** — Baseline distribution matches inference distribution.
 - **$0.10 \le \text{PSI} \le 0.20$**: **Moderate Shift** — Triggers warning alert metrics in Prometheus.
