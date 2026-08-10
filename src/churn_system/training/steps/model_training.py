@@ -44,7 +44,7 @@ def build_preprocessor(X):
         ]
     )
 
-    return preprocessor
+    return preprocessor  # noqa: RET504
 
 
 def get_model_registry():
@@ -78,7 +78,7 @@ def _train_single_candidate(name: str, estimator, X_train, y_train) -> tuple[str
     Each invocation builds its own preprocessor instance to guarantee no
     shared mutable state between threads.
     """
-    logger.info(f"[Thread {threading.current_thread().name}] Training candidate: {name}")
+    logger.info("[Thread %s] Training candidate: %s", threading.current_thread().name, name)
     preprocessor = build_preprocessor(X_train)
     pipeline = Pipeline(
         steps=[
@@ -87,7 +87,7 @@ def _train_single_candidate(name: str, estimator, X_train, y_train) -> tuple[str
         ]
     )
     pipeline.fit(X_train, y_train)
-    logger.info(f"[Thread {threading.current_thread().name}] Finished training: {name}")
+    logger.info("[Thread %s] Finished training: %s", threading.current_thread().name, name)
     return name, pipeline
 
 
@@ -108,8 +108,9 @@ def train_candidate_models(X_train, y_train):
     max_workers = CONFIG.get("training", {}).get("max_workers", len(registry))
 
     logger.info(
-        f"Starting concurrent training of {len(registry)} candidates "
-        f"with max_workers={max_workers}"
+        "Starting concurrent training of %d candidates with max_workers=%s",
+        len(registry),
+        max_workers,
     )
 
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="trainer") as executor:
@@ -128,10 +129,10 @@ def train_candidate_models(X_train, y_train):
                 name, pipeline = future.result()
                 with results_lock:
                     fitted[name] = pipeline
-                logger.info(f"Candidate '{name}' training completed successfully")
+                logger.info("Candidate '%s' training completed successfully", name)
             except Exception:
-                logger.exception(f"Candidate '{submitted_name}' training FAILED")
+                logger.exception("Candidate '%s' training FAILED", submitted_name)
                 raise
 
-    logger.info(f"All {len(fitted)} candidates trained successfully")
+    logger.info("All %d candidates trained successfully", len(fitted))
     return fitted

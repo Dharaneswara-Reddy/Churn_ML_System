@@ -8,7 +8,7 @@ Data → Validation → Feature Engineering → Training → Evaluation → Arti
 import json
 import pickle
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -27,30 +27,53 @@ from churn_system.training.steps.model_evaluation import evaluate_candidates
 from churn_system.training.steps.model_training import train_candidate_models
 
 GLOBAL_SEED = 42
-MODEL_VERSION = datetime.now().strftime("%Y%m%d_%H%M%S")
 logger = get_logger(__name__, CONFIG["logging"]["training"])
+
+
+def new_model_version() -> str:
+    """
+    Build a fresh version stamp for a training run.
+
+    Computed per call, never at import: the scheduler imports ``main`` once and then
+    calls it every cycle, so an import-time stamp would make every retrain overwrite
+    the same experiment directory and destroy the run history the lifecycle needs to
+    compare and roll back.
+    """
+    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
 def log_target_distribution(y):
     values, counts = np.unique(y, return_counts=True)
-    dist = dict(zip(values, counts))
-    logger.info(f"Target distribution: {dist}")
+    dist = dict(zip(values, counts, strict=True))
+    logger.info("Target distribution: %s", dist)
 
 
 def summarize_feature(name, train_series, test_series):
     logger.info(
-        f"{name} | "
-        f"Train(mean={train_series.mean():.2f}, std={train_series.std():.2f}) | "
-        f"Test(mean={test_series.mean():.2f}, std={test_series.std():.2f})"
+        "%s | Train(mean=%.2f, std=%.2f) | Test(mean=%.2f, std=%.2f)",
+        name,
+        train_series.mean(),
+        train_series.std(),
+        test_series.mean(),
+        test_series.std(),
     )
 
 
-def main():
+def main() -> str:
+    """
+    Run the full training pipeline.
+
+    Returns the experiment directory name (``churn_model_<version>``) so callers can
+    act on the run they just produced instead of re-globbing for the newest
+    directory, which is racy when more than one training process exists.
+    """
     # ----------------------------
     # Reproducibility: global seeds
     # ----------------------------
     random.seed(GLOBAL_SEED)
     np.random.seed(GLOBAL_SEED)
+
+    MODEL_VERSION = new_model_version()
 
     logger.info("===== Training Pipeline Started =====")
     mlflow_cfg = configure_mlflow()
@@ -60,21 +83,18 @@ def main():
     # ----------------------------
     df, data_path = load_training_data()
 
-    logger.info(f"Training dataset used: {data_path}")
-    logger.info(f"Training samples: {len(df)}")
+    logger.info("Training dataset used: %s", data_path)
+    logger.info("Training samples: %d", len(df))
 
     # ----------------------------
     # Data validation
     # ----------------------------
     df = run_data_validation(df)
 
-    # Fix Total Charges column
-    df["Total Charges"] = (
-        df["Total Charges"]
-        .replace(" ", np.nan)
-        .astype(float)
-        .fillna(0)
-    )
+    # "Total Charges" is normalised once, in build_features — the single transform
+    # shared by training and serving. Repeating it here risked the two paths
+    # diverging, which is exactly the train/serve skew the shared builder exists
+    # to prevent.
 
     # ----------------------------
     # Temporal split
@@ -99,7 +119,7 @@ def main():
     feature_schema = list(X_train.columns)
     feature_types = infer_feature_types(X_train)
 
-    logger.info(f"Feature schema captured ({len(feature_schema)} features)")
+    logger.info("Feature schema captured (%d features)", len(feature_schema))
 
     # ----------------------------
     # Feature statistics
@@ -123,13 +143,15 @@ def main():
     )
 
     logger.info(
-        f"Train tenure range: "
-        f"{train_df['Tenure Months'].min()} - {train_df['Tenure Months'].max()}"
+        "Train tenure range: %s - %s",
+        train_df["Tenure Months"].min(),
+        train_df["Tenure Months"].max(),
     )
 
     logger.info(
-        f"Test tenure range: "
-        f"{test_df['Tenure Months'].min()} - {test_df['Tenure Months'].max()}"
+        "Test tenure range: %s - %s",
+        test_df["Tenure Months"].min(),
+        test_df["Tenure Months"].max(),
     )
 
     # ----------------------------
@@ -162,7 +184,7 @@ def main():
 
     winner_name = experiment_report["winner"]
 
-    logger.info(f"Champion model selected: {winner_name}")
+    logger.info("Champion model selected: %s", winner_name)
 
     # ----------------------------
     # Save artifacts
@@ -179,7 +201,7 @@ def main():
     with open(model_path, "wb") as f:
         pickle.dump(pipeline, f)
 
-    logger.info(f"Model saved at {model_path}")
+    logger.info("Model saved at %s", model_path)
 
     # ----------------------------
     # Save experiment report
@@ -196,7 +218,7 @@ def main():
     # ----------------------------
     metadata = {
         "model_version": MODEL_VERSION,
-        "training_date": datetime.now().strftime("%Y-%m-%d"),
+        "training_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "model_type": winner_name,
         "split_strategy": "time-aware (tenure-based)",
         "feature_schema": feature_schema,
@@ -255,6 +277,8 @@ def main():
         logger.info("MLflow disabled by CHURN_MLFLOW_ENABLED")
 
     logger.info("===== Training Pipeline Completed =====")
+
+    return model_dir.name
 
 
 if __name__ == "__main__":
