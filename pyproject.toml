@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "alembic>=1.13.0",
     "fastapi>=0.128.7",
     "mlflow>=2.14.0",
     "numpy>=2.2.6",
@@ -26,6 +27,7 @@ dependencies = [
 dev = [
     "httpx>=0.27.0",
     "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
     "ruff>=0.8.0",
 ]
 
@@ -46,8 +48,39 @@ addopts = "-q"
 
 [tool.ruff]
 line-length = 100
+# Pinned explicitly: CI runs 3.12 while .python-version says 3.10, and without this
+# the UP rules would behave differently in the two environments.
+target-version = "py310"
 src = ["src", "tests", "scripts"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
-ignore = ["E501"]
+select = [
+    "E", "F", "I",      # baseline: pycodestyle, pyflakes, import sorting
+    "B",                # bugbear — catches unguarded zip(), mutable defaults
+    "UP",               # pyupgrade
+    "C4",               # comprehension simplifications
+    "SIM",              # simplifications
+    "RET",              # return-statement hygiene
+    "PERF",             # obvious performance traps
+    "DTZ",              # naive datetimes — model versions are timestamps
+    "RUF",              # ruff-native, incl. unused noqa
+    "G",                # logging format: no f-strings in log calls
+    "T20",              # no stray print() in library code
+    "LOG",              # logging misuse
+    "PIE", "ISC", "A", "TID",  # currently clean — kept as ratchets
+    "S",                # bandit security rules
+]
+ignore = [
+    "E501",     # line length is handled by the formatter
+    "S101",     # bare asserts are the point of the test suite
+    "RUF012",   # ClassVar annotations add noise on simple singletons
+    "PERF203",  # retry/backoff loops need try/except inside the loop by design
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private helpers, use non-crypto randomness, and shell out.
+"tests/**" = ["S311", "SLF001", "S603", "S607"]
+# CLI scripts print to stdout on purpose and generate synthetic (non-crypto) data.
+"scripts/**" = ["T201", "S311"]
+# Alembic migrations are generated-style and reference globals by convention.
+"alembic/**" = ["INP001"]
