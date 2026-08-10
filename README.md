@@ -192,13 +192,23 @@ curl -X POST http://localhost:8000/predict \
 
 ### Endpoints Overview
 
-| Endpoint | Method | Rate Limit | Description |
-| :--- | :---: | :---: | :--- |
-| `/` | `GET` | — | System metadata & operational status |
-| `/health` | `GET` | — | Microservice readiness & liveness probe |
-| `/metrics` | `GET` | — | Prometheus scraping metrics |
-| `/predict` | `POST` | 100/min | Synchronous single-customer churn inference |
-| `/predict/batch` | `POST` | 20/min | Vectorized batch inference (up to 100 customer records) |
+| Endpoint | Method | Auth | Rate Limit | Description |
+| :--- | :---: | :---: | :---: | :--- |
+| `/` | `GET` | — | — | System metadata & operational status |
+| `/health` | `GET` | — | — | Liveness probe — the process is up |
+| `/ready` | `GET` | — | — | Readiness probe — scores a real row, 503 if the model cannot serve |
+| `/metrics` | `GET` | — | — | Prometheus scrape endpoint |
+| `/predict` | `POST` | ✅ | 120/min | Single-customer churn inference |
+| `/predict/batch` | `POST` | ✅ | 120/min | Batch inference (up to `CHURN_MAX_BATCH_SIZE`, default 100) |
+| `/explain` | `POST` | ✅ | 120/min | SHAP explanation for one prediction |
+| `/explain/global` | `GET` | ✅ | 120/min | Global feature importance, top `?limit=` (default 50) |
+| `/feedback/{request_id}` | `POST` | ✅ | 120/min | Attach ground truth to a past prediction |
+| `/monitoring/dashboard` | `GET` | ✅ | — | Consolidated monitoring reports |
+| `/admin/reload-model` | `POST` | 🔐 admin | 5/min | Hot-reload the production model |
+| `/subject/{subject_id}` | `DELETE` | 🔐 admin | 30/min | Erase all stored predictions for a customer (GDPR) |
+
+Endpoints marked 🔐 require `CHURN_ADMIN_API_KEY` when it is set, so a leaked
+prediction key cannot force model reloads or delete data.
 
 ---
 
@@ -214,13 +224,33 @@ $$\text{PSI} = \sum \left( (P_{\text{actual}} - P_{\text{expected}}) \times \ln\
 - **$0.10 \le \text{PSI} \le 0.20$**: **Moderate Shift** — Triggers warning alert metrics in Prometheus.
 - **$\text{PSI} > 0.20$**: **Significant Drift** — Automates re-training workflow trigger.
 
+A minimum production sample size (`monitoring.min_production_samples`, default 20)
+must be met before drift is evaluated at all — PSI against a handful of rows is
+large regardless of real drift, and would otherwise trigger spurious retraining.
+
 ### Safe Champion vs. Challenger Promotion
 
 When retraining is executed:
-1. **Schema Contract Validation**: The candidate model must match expected feature names, types, and ordering.
-2. **Performance Gating**: The challenger model must exceed the current production champion's PR-AUC score by a configurable margin (`min_improvement: 0.01`).
-3. **Atomic Hot-Reloading**: The API server reloads model memory locks without dropping active connections.
-4. **Automated Rollback**: If downstream inference error rates spike, the orchestrator reverts state to the last known healthy model version.
+1. **Schema Contract Validation**: The candidate must match the production feature names, types, and ordering; a mismatch refuses the promotion and leaves the incumbent serving.
+2. **Performance Gating**: The challenger must improve on `model_promotion.metric` (default `pr_auc`) by at least `model_promotion.min_improvement` (default `0.0`, i.e. any strict improvement).
+3. **Atomic Swap**: The bundle is staged in a sibling directory and moved into place with directory renames, so an interrupted promotion can never leave production without a model.
+4. **Hot Reload**: The scheduler notifies each serving instance listed in `CHURN_RELOAD_ENDPOINTS`, which reloads the model and invalidates the feature-contract and SHAP caches in one operation.
+5. **Automated Rollback**: An unhealthy model is reverted to the last *distinct* lineage version. Rollback is skipped in a cycle that just promoted, so a fresh model is not immediately undone.
+
+### Ground Truth
+
+Drift detection compares input distributions; it cannot tell whether a prediction
+was *right*. Report observed outcomes to close that loop:
+
+```bash
+curl -X POST http://localhost:8000/feedback/<request_id> \
+  -H "X-API-Key: $CHURN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"label": 1}'
+```
+
+Labelled predictions are merged into the retraining dataset, which the training
+pipeline prefers over the original CSV when present.
 
 ---
 
@@ -229,54 +259,79 @@ When retraining is executed:
 The system exposes native Prometheus metrics out-of-the-box:
 
 ```text
-# HELP churn_predictions_total Total count of churn predictions served
-# TYPE churn_predictions_total counter
-churn_predictions_total{status="success"} 1420
+# HELP churn_api_requests_total Total API requests by path, method and status
+# TYPE churn_api_requests_total counter
+churn_api_requests_total{path="/predict",method="POST",status="200"} 1420
 
-# HELP churn_prediction_latency_seconds Latency histogram for inference requests
-# TYPE churn_prediction_latency_seconds histogram
-churn_prediction_latency_seconds_bucket{le="0.005"} 1380
-churn_prediction_latency_seconds_bucket{le="0.01"} 1415
+# HELP churn_api_request_latency_seconds Request latency histogram
+# TYPE churn_api_request_latency_seconds histogram
+churn_api_request_latency_seconds_bucket{path="/predict",le="0.005"} 1380
 
-# HELP churn_feature_drift_psi Current Population Stability Index per feature
-# TYPE churn_feature_drift_psi gauge
-churn_feature_drift_psi{feature="Monthly Charges"} 0.042
-churn_feature_drift_psi{feature="Tenure Months"} 0.185
+# HELP churn_drifting_feature_count Number of drifting features detected
+# TYPE churn_drifting_feature_count gauge
+churn_drifting_feature_count 1
+
+# HELP churn_event_write_failures_total Prediction events that could not be persisted
+# TYPE churn_event_write_failures_total counter
+churn_event_write_failures_total 0
 ```
 
-Pre-configured alert rules located at `observability/alert_rules.yaml` notify on:
-- High inference error rates (> 1% over 5m window)
-- Latency threshold violations (p95 > 50ms)
-- Critical data drift alerts (PSI > 0.20 on primary features)
+Pre-configured alert rules at [`observability/prometheus/alert_rules.yml`](observability/prometheus/alert_rules.yml) notify on:
+- **`ChurnApiHighErrorRate`** — 5xx rate on `/predict` above 2% for 10m
+- **`ChurnApiHighLatencyP95`** — p95 latency above 0.5s for 10m
+- **`ChurnModelDriftDetected`** — 2 or more drifting features for 30m
+
+> **Note on metric scope.** Drift and data-quality gauges are set by the lifecycle
+> process, not the API. Prometheus scrapes the API only, so those series need a
+> Pushgateway (or a scrape target on the scheduler) before the drift alert can fire
+> in a multi-process deployment.
 
 ---
 
 ## 🐳 Containerized Deployment
 
-Deploy the entire production stack (API server, Background Workers, and Prometheus) using Docker Compose:
+The default stack is the API, the outbox worker, and Prometheus. Training, the
+lifecycle scheduler, and migrations sit behind profiles so they are opt-in.
 
 ```bash
-# Build images and start microservices in detached mode
+# Apply database migrations first (required on a fresh volume and after upgrades)
+docker compose --profile migrate run --rm migrate
+
+# Build and start api + worker + prometheus
 docker compose up -d --build
 
 # Inspect running container logs
 docker compose logs -f api
 
-# Run one-shot model retraining job inside container
-docker compose run --rm train
+# One-shot training job
+docker compose --profile training run --rm train
+
+# Run the drift → retrain → promote loop continuously
+docker compose --profile lifecycle up -d scheduler
 ```
+
+> `CHURN_API_KEY` has no default. The stack refuses to start without it, so a
+> missing `.env` can never silently bring up an unauthenticated API. For local
+> development set `CHURN_ALLOW_ANONYMOUS=1` instead.
 
 ### Environment Configuration Options
 
-All settings are configured via `src/churn_system/config/settings.yaml` and can be cleanly overridden via standard environment variables:
+All settings live in `src/churn_system/config/settings.yaml` and can be overridden
+via environment variables:
 
 | Environment Variable | Default | Purpose |
 | :--- | :--- | :--- |
+| `CHURN_API_KEY` | *(required)* | API key clients must send as `X-API-Key` |
+| `CHURN_ALLOW_ANONYMOUS` | `0` | Explicitly run with authentication disabled (local dev only) |
+| `CHURN_ADMIN_API_KEY` | `""` | Separate credential for `/admin/*`; falls back to `CHURN_API_KEY` |
 | `CHURN_INFERENCE_THRESHOLD` | `0.5` | Classification probability decision threshold |
-| `CHURN_API_KEY` | `""` | Require bearer token authentication header if set |
-| `CHURN_DISABLE_RATE_LIMIT` | `0` | Disable SlowAPI rate limiting for benchmark testing |
-| `CHURN_LOG_FORMAT` | `text` | Logging mode (`json` for production, `text` for dev) |
-| `CHURN_EVENT_STORE_DATABASE_URL` | `sqlite:///events.db` | SQLAlchemy connection URL for prediction outbox |
+| `CHURN_DISABLE_RATE_LIMIT` | `0` | Set to `1`/`true` to disable rate limiting. `0` keeps it **on** |
+| `CHURN_MAX_BODY_BYTES` | `8388608` | Reject request bodies larger than this |
+| `CHURN_LOG_FORMAT` | `text` | Logging mode (`json` for production) |
+| `CHURN_EVENT_STORE_DATABASE_URL` | `sqlite:///./data/churn_events.db` | SQLAlchemy URL for the event store |
+| `CHURN_RELOAD_ENDPOINTS` | `""` | Comma-separated `/admin/reload-model` URLs notified after promotion |
+| `CHURN_SUBJECT_KEY_SALT` | *(dev default)* | Salt for the pseudonymous subject key — set a real secret in production |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Peers permitted to set `X-Forwarded-For`. Never `*` |
 
 ---
 
@@ -285,19 +340,23 @@ All settings are configured via `src/churn_system/config/settings.yaml` and can 
 The codebase maintains strict code quality standards, validated with comprehensive unit, integration, and concurrency tests.
 
 ```bash
-# Execute full pytest suite (71 passing tests)
+# Execute full pytest suite (132 tests, 77% line coverage)
 .venv/bin/python -m pytest tests/ -v
 
-# Run static linting and import formatting checks
-.venv/bin/python -m ruff check src tests scripts
+# With the coverage gate CI enforces
+.venv/bin/python -m pytest tests/ --cov=churn_system --cov-fail-under=70
+
+# Static linting and import formatting
+.venv/bin/python -m ruff check src tests scripts alembic
 ```
 
 ### Test Coverage Highlights
-- **API & Routing**: Authorization, schema generation, rate limiting, and exception handlers.
-- **Inference & Contracts**: Artifact loading, mock patching, and thread-safe ModelRegistry singletons.
-- **Concurrency Primitives**: `threading.Barrier` verification for concurrent model reloads.
-- **Monitoring & Drift**: PSI mathematical correctness, binning logic, and drift thresholds.
-- **Events & Outbox**: Transactional record persistence, PII sanitization, and outbox flusher jobs.
+- **API & Security**: fail-closed auth, per-endpoint authorization, body-size limits, and a uniform error envelope.
+- **Inference & Contracts**: artifact validation, dynamic schema generation, and feature ordering.
+- **Concurrency**: writer liveness under sustained reader load, and mutual exclusion during hot reload.
+- **Monitoring & Drift**: PSI correctness including out-of-range, empty, and constant inputs, plus the minimum-sample guard on the retraining decision.
+- **Lifecycle**: the schema interlock refusing a promotion, atomic swap cleanup, and the real rollback restore path.
+- **Events & Outbox**: lease-based claiming under concurrent workers, retry release, and label recording.
 
 ---
 
