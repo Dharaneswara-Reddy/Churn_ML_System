@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 from pathlib import Path
 from typing import Any
 
 from churn_system.config.config import CONFIG
+
+VERSION_PATTERN = re.compile(r"^churn_model_\d{8}_\d{6}$")
 
 
 def _cfg(config: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -34,13 +38,61 @@ def experiment_dir(version: str, config: dict[str, Any] | None = None) -> Path:
 
 
 def latest_experiment_dir(config: dict[str, Any] | None = None) -> Path | None:
-    import re
-    pattern = re.compile(r"^churn_model_\d{8}_\d{6}$")
-    versions = sorted([
-        d for d in experiments_dir(config).glob("churn_model_*")
-        if d.is_dir() and pattern.match(d.name) and (d / "metadata.json").exists()
-    ])
+    """
+    Return the newest complete experiment bundle, or None when there is none.
+
+    Versions are named ``churn_model_YYYYMMDD_HHMMSS``, so a lexicographic sort is
+    chronological. Directories without a metadata.json are half-written and skipped.
+    """
+    root = experiments_dir(config)
+    if not root.is_dir():
+        return None
+    versions = sorted(
+        d
+        for d in root.glob("churn_model_*")
+        if d.is_dir() and VERSION_PATTERN.match(d.name) and (d / "metadata.json").exists()
+    )
     return versions[-1] if versions else None
+
+
+def swap_model_bundle(source: Path, target: Path) -> None:
+    """
+    Replace the bundle at ``target`` with a copy of ``source``, atomically.
+
+    The copy lands in a sibling staging directory first, so the live bundle stays
+    intact for the whole slow part of the operation. Only two directory renames
+    touch ``target``, and the outgoing bundle is retained until the new one is in
+    place — a crash mid-swap therefore leaves a complete bundle at either ``target``
+    or its ``.retired`` sibling, never a half-copied one.
+    """
+    source = Path(source)
+    target = Path(target)
+
+    if not source.is_dir():
+        raise FileNotFoundError(f"Model bundle source not found: {source}")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = target.parent / f".{target.name}.incoming"
+    retired = target.parent / f".{target.name}.retired"
+
+    shutil.rmtree(staging, ignore_errors=True)
+    shutil.rmtree(retired, ignore_errors=True)
+
+    shutil.copytree(source, staging)
+
+    if target.exists():
+        target.rename(retired)
+    try:
+        staging.rename(target)
+    except OSError:
+        # Put the outgoing bundle back rather than leaving production empty.
+        if retired.exists() and not target.exists():
+            retired.rename(target)
+        raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+    shutil.rmtree(retired, ignore_errors=True)
 
 
 def metadata_path_for_model(model_path: Path) -> Path:
@@ -48,7 +100,7 @@ def metadata_path_for_model(model_path: Path) -> Path:
 
 
 def load_metadata(metadata_path: Path) -> dict[str, Any]:
-    with open(metadata_path, "r", encoding="utf-8") as f:
+    with open(metadata_path, encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
         raise ValueError(f"Metadata must be a JSON object: {metadata_path}")
