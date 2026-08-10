@@ -83,8 +83,15 @@ data/Telco_customer_churn_raw.csv
 *~
 
 # ---- AI agent metadata (GitNexus, Claude, Cursor) -----------
+# Local-only agent config: instructions, subagents, and installed skills.
+# Not published to the remote — each developer keeps their own.
 .gitnexus/
 .claude/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.cursor/
+.cursorrules
 .cursorignore
 .cursorindexingignore
 
