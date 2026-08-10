@@ -51,7 +51,7 @@ def evaluate_candidates(models, X_test, y_test):
             "pr_auc": float(average_precision_score(y_test, probs)),
         }
 
-        logger.info(f"{name} {SELECTION_METRIC} = {metrics[SELECTION_METRIC]:.4f}")
+        logger.info("%s %s = %.4f", name, SELECTION_METRIC, metrics[SELECTION_METRIC])
 
         results[name] = metrics
 
@@ -67,6 +67,6 @@ def evaluate_candidates(models, X_test, y_test):
         "selection_metric": SELECTION_METRIC,
     }
 
-    logger.info(f"Winner selected: {best_name} ({SELECTION_METRIC}={best_score:.4f})")
+    logger.info("Winner selected: %s (%s=%.4f)", best_name, SELECTION_METRIC, best_score)
 
     return best_model, experiment_report, results[best_name]

@@ -22,6 +22,6 @@ def run_feature_engineering(df: pd.DataFrame):
 
     X = build_features(df, training=True)
 
-    logger.info(f"Feature engineering completed | features={len(X.columns)}")
+    logger.info("Feature engineering completed | features=%d", len(X.columns))
 
     return X
