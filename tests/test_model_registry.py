@@ -8,6 +8,92 @@ import time
 from churn_system.serving.model_registry import ModelRegistry, ReadWriteLock
 
 
+class TestWriterLiveness:
+    """
+    The properties that actually matter for a hot-reload, and that the original
+    tests did not reach: a writer must drain in-flight readers, and it must not be
+    starved by a continuous stream of new ones.
+    """
+
+    def test_writer_waits_for_in_flight_reader(self):
+        """
+        A reload must not swap the model while a prediction is mid-flight.
+
+        Driven with events rather than sleeps so the ordering is deterministic.
+        """
+        lock = ReadWriteLock()
+        reader_holding = threading.Event()
+        writer_acquired = threading.Event()
+        release_reader = threading.Event()
+
+        def reader():
+            lock.acquire_read()
+            try:
+                reader_holding.set()
+                release_reader.wait(timeout=5)
+            finally:
+                lock.release_read()
+
+        def writer():
+            reader_holding.wait(timeout=5)
+            lock.acquire_write()
+            try:
+                writer_acquired.set()
+            finally:
+                lock.release_write()
+
+        reader_thread = threading.Thread(target=reader)
+        writer_thread = threading.Thread(target=writer)
+        reader_thread.start()
+        writer_thread.start()
+
+        assert reader_holding.wait(timeout=5)
+        # The writer must still be blocked while the reader holds the lock.
+        assert not writer_acquired.wait(timeout=0.3), "writer swapped under a reader"
+
+        release_reader.set()
+        assert writer_acquired.wait(timeout=5), "writer never acquired the lock"
+
+        reader_thread.join(timeout=5)
+        writer_thread.join(timeout=5)
+
+    def test_writer_is_not_starved_by_continuous_readers(self):
+        """
+        Arriving readers must defer to a waiting writer.
+
+        Without writer preference, a steady stream of inference threads keeps the
+        reader count above zero and a reload waits behind all of them — measured at
+        over seven seconds for eight readers, and unbounded in principle.
+        """
+        lock = ReadWriteLock()
+        stop = threading.Event()
+
+        def reader():
+            while not stop.is_set():
+                lock.acquire_read()
+                try:
+                    time.sleep(0.002)
+                finally:
+                    lock.release_read()
+
+        threads = [threading.Thread(target=reader, daemon=True) for _ in range(8)]
+        for t in threads:
+            t.start()
+        time.sleep(0.2)  # let the readers saturate the lock
+
+        started = time.time()
+        lock.acquire_write()
+        try:
+            waited = time.time() - started
+        finally:
+            lock.release_write()
+            stop.set()
+        for t in threads:
+            t.join(timeout=5)
+
+        assert waited < 1.0, f"writer starved for {waited:.2f}s under reader load"
+
+
 class TestReadWriteLock:
     """Verify shared-exclusive lock semantics."""
 

@@ -44,7 +44,7 @@ class TestOutlierDetection:
         assert result["x"]["outlier_ratio"] < 0.15  # Normal data has ~0.7% outliers
 
     def test_extreme_outliers_detected(self):
-        data = list(np.random.normal(50, 5, 98)) + [500, -500]
+        data = [*np.random.normal(50, 5, 98), 500, -500]
         df = pd.DataFrame({"x": data})
         result = detect_outliers(df)
         assert result["x"]["outlier_count"] >= 2
