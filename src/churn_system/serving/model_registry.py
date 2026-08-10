@@ -48,11 +48,20 @@ class ReadWriteLock:
         self._readers_ok = threading.Condition(self._lock)
         self._readers: int = 0
         self._writer: bool = False
+        self._writers_waiting: int = 0
 
     def acquire_read(self) -> None:
-        """Acquire the read lock. Blocks if a writer is active."""
+        """
+        Acquire the read lock. Blocks if a writer is active or waiting.
+
+        Deferring to *waiting* writers is what prevents starvation. When readers
+        only checked for an already-active writer, a steady stream of inference
+        threads could keep the reader count above zero indefinitely and a model
+        reload would wait behind them — measured at over seven seconds with just
+        eight concurrent readers, and unbounded in principle.
+        """
         with self._lock:
-            while self._writer:
+            while self._writer or self._writers_waiting > 0:
                 self._readers_ok.wait()
             self._readers += 1
 
@@ -64,14 +73,23 @@ class ReadWriteLock:
                 self._readers_ok.notify_all()
 
     def acquire_write(self) -> None:
-        """Acquire the write lock. Blocks until all readers release."""
+        """
+        Acquire the write lock. Blocks until all active readers release.
+
+        ``self._lock`` is deliberately held on return — it is released by
+        ``release_write``, which is what makes the critical section exclusive.
+        """
         self._lock.acquire()
-        while self._readers > 0 or self._writer:
-            self._readers_ok.wait()
-        self._writer = True
+        self._writers_waiting += 1
+        try:
+            while self._readers > 0 or self._writer:
+                self._readers_ok.wait()
+            self._writer = True
+        finally:
+            self._writers_waiting -= 1
 
     def release_write(self) -> None:
-        """Release the write lock. Notifies all waiting readers."""
+        """Release the write lock. Notifies all waiting readers and writers."""
         self._writer = False
         self._readers_ok.notify_all()
         self._lock.release()
@@ -182,25 +200,46 @@ class ModelRegistry:
         """
         Hot-reload the production model (thread-safe write).
 
-        Acquires exclusive write lock → all in-flight reads complete first,
-        new reads block until the swap is done. The swap itself is an atomic
-        pointer assignment.
+        The new model is unpickled *before* the write lock is taken, so readers only
+        block for the pointer swap rather than for the whole disk read. Dependent
+        caches are invalidated in the same operation: the feature contract is
+        ``lru_cache``d and the SHAP explainer is memoised, so without this the API
+        would order inference columns and explain predictions using the previous
+        model's schema.
         """
+        model, version, path = self._load_model_from_disk()
+
         self._rw_lock.acquire_write()
         try:
             old_version = self._model_version
-            model, version, path = self._load_model_from_disk()
             self._model = model
             self._model_version = version
             self._model_path = path
             self._loaded_at = time.time()
-            logger.info(
-                "Model hot-reloaded | old_version=%s → new_version=%s",
-                old_version,
-                version,
-            )
         finally:
             self._rw_lock.release_write()
+
+        self._invalidate_dependent_caches()
+
+        logger.info(
+            "Model hot-reloaded | old_version=%s → new_version=%s",
+            old_version,
+            version,
+        )
+
+    @staticmethod
+    def _invalidate_dependent_caches() -> None:
+        """Drop caches keyed to the previous model."""
+        from churn_system.inference.model_contract import clear_model_contract_cache
+
+        clear_model_contract_cache()
+
+        try:
+            from churn_system.explainability.shap_explainer import reset_explainer
+
+            reset_explainer()
+        except Exception:
+            logger.exception("Failed to reset SHAP explainer after reload")
 
     def get_info(self) -> dict[str, Any]:
         """Return model metadata (thread-safe read)."""
