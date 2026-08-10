@@ -35,11 +35,11 @@ def _load_feature_types_from_reference(
 ) -> dict[str, str]:
     ref_path = Path(CONFIG["paths"]["training_reference"])
     if not ref_path.exists():
-        return {c: "str" for c in feature_schema}
+        return dict.fromkeys(feature_schema, "str")
     df = pd.read_csv(ref_path, nrows=512)
     missing = [c for c in feature_schema if c not in df.columns]
     if missing:
-        return {c: "str" for c in feature_schema}
+        return dict.fromkeys(feature_schema, "str")
     subset = df[feature_schema]
     return infer_feature_types(subset)
 
@@ -50,8 +50,7 @@ def load_feature_types() -> dict[str, str]:
     if "feature_types" in meta and isinstance(meta["feature_types"], dict):
         ft = meta["feature_types"]
         # Ensure every column has a type
-        out = {c: ft.get(c, "str") for c in feature_schema}
-        return out
+        return {c: ft.get(c, "str") for c in feature_schema}
     return _load_feature_types_from_reference(feature_schema)
 
 
@@ -78,10 +77,8 @@ def generate_request_model():
         py_t = _python_type_for(tname)
         fields[feature] = (py_t, Field(..., description=f"Feature {feature}"))
 
-    RequestModel = create_model(
+    return create_model(
         "DynamicPredictionRequest",
         __config__=ConfigDict(extra="forbid"),
         **fields,
     )
-
-    return RequestModel
