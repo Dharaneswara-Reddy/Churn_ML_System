@@ -71,7 +71,11 @@ def log_sklearn_model(
         _log,
         max_retries=3,
         base_delay=1.0,
-        retryable_exceptions=(ConnectionError, OSError, Exception),
+        # Transient failures only. Including `Exception` here made the tuple
+        # equivalent to retrying everything, so deterministic errors (a duplicate
+        # registered-model name, a bad argument) burned the full backoff before
+        # surfacing, buried under retry warnings.
+        retryable_exceptions=(ConnectionError, TimeoutError, OSError),
         operation_name="mlflow.log_model",
     )
     return str(model_info.model_uri)
@@ -89,6 +93,10 @@ def log_artifact(path: Path) -> None:
         _log,
         max_retries=2,
         base_delay=0.5,
-        retryable_exceptions=(ConnectionError, OSError, Exception),
+        # Transient failures only. Including `Exception` here made the tuple
+        # equivalent to retrying everything, so deterministic errors (a duplicate
+        # registered-model name, a bad argument) burned the full backoff before
+        # surfacing, buried under retry warnings.
+        retryable_exceptions=(ConnectionError, TimeoutError, OSError),
         operation_name="mlflow.log_artifact",
     )

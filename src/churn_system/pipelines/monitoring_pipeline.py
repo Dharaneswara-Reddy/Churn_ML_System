@@ -20,8 +20,8 @@ def run_monitoring_pipeline():
         evaluate_model_health()
         generate_prediction_report()
         logger.info("Monitoring checks completed.")
-    except Exception as e:
-        logger.exception(f"Monitoring pipeline failed: {e}")
+    except Exception:
+        logger.exception("Monitoring pipeline failed")
         raise
 
     logger.info("--- Monitoring Pipeline Finished ---")

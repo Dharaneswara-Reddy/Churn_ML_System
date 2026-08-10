@@ -24,14 +24,14 @@ def start_scheduler():
     logger.info("Lifecycle scheduler started.")
 
     while True:
-        logger.info(f"Running lifecycle check at {datetime.now(timezone.utc).isoformat()} UTC")
+        logger.info("Running lifecycle check at %s UTC", datetime.now(timezone.utc).isoformat())
 
         try:
             run_lifecycle()
-        except Exception as e:
-            logger.exception(f"Lifecycle execution failed: {e}")
+        except Exception:
+            logger.exception("Lifecycle execution failed")
 
-        logger.info(f"Sleeping for {CHECK_INTERVAL} seconds...")
+        logger.info("Sleeping for %d seconds...", CHECK_INTERVAL)
         time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":

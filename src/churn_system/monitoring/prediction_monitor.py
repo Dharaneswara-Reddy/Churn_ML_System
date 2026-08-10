@@ -38,7 +38,7 @@ def generate_prediction_report():
 
     report = {
         "timestamp" : datetime.now(timezone.utc).isoformat(),
-        "total_predictions" : int(len(df)),
+        "total_predictions" : len(df),
         "avg_probability" : float(probs.mean()),
         "std_probability" : float(probs.std()),
         "min_probability" : float(probs.min()),

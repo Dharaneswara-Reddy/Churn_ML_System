@@ -76,7 +76,7 @@ def _load_background_data() -> pd.DataFrame:
         model_path = Path(CONFIG["paths"]["production_model"])
         metadata_path = model_path.parent / "metadata.json"
         if metadata_path.exists():
-            with open(metadata_path, "r") as mf:
+            with open(metadata_path) as mf:
                 meta = json.load(mf)
             feature_types = meta.get("feature_types", {})
             for col, t in feature_types.items():
@@ -212,7 +212,7 @@ def explain_prediction(raw_features: dict) -> dict[str, Any]:
         values = shap_values[0]
 
     feature_names = _feature_names or [f"Feature_{i}" for i in range(len(values))]
-    contributions = dict(zip(feature_names, [round(float(v), 6) for v in values]))
+    contributions = dict(zip(feature_names, [round(float(v), 6) for v in values], strict=False))
 
     # Sort contributions by absolute magnitude
     sorted_contribs = sorted(
@@ -285,7 +285,7 @@ def compute_global_importance() -> dict[str, Any]:
     importance = sorted(
         [
             {"feature": name, "mean_abs_shap": round(float(val), 6)}
-            for name, val in zip(feature_names, mean_abs_shap)
+            for name, val in zip(feature_names, mean_abs_shap, strict=False)
         ],
         key=lambda x: x["mean_abs_shap"],
         reverse=True,

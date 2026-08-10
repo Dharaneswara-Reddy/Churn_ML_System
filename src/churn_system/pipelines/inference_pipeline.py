@@ -21,6 +21,6 @@ def run_inference_pipeline(payload: dict):
         result = run_inference(payload)
         logger.info("Inference pipeline completed")
         return result
-    except Exception as e:
-        logger.exception(f"Inference pipeline failed: {e}")
+    except Exception:
+        logger.exception("Inference pipeline failed")
         raise

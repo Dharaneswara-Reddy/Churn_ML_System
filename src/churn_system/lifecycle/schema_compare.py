@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 def load_schema(metadata_path : Path):
-    with open(metadata_path, "r") as f:
+    with open(metadata_path) as f:
         meta = json.load(f)
     return set(meta["feature_schema"])
 
