@@ -1,33 +1,34 @@
 """
 Distributed Outbox Consumer Worker.
 
-Implements the Transactional Outbox Pattern for reliable event processing
-in a distributed system. This worker runs as a SEPARATE PROCESS from the
-API server, polling the outbox_events table and processing unhandled events.
+Implements the Transactional Outbox Pattern for reliable event processing. This
+worker runs as a SEPARATE PROCESS from the API server, claiming unprocessed rows
+from the outbox table and publishing them.
 
-Distributed Systems Concepts Demonstrated:
-  1. Transactional Outbox Pattern: events are written atomically with the
-     business transaction (prediction), then consumed asynchronously.
-  2. Exactly-once processing: uses database-level row locking
-     (SELECT ... FOR UPDATE SKIP LOCKED) to prevent duplicate processing
-     when multiple worker instances run concurrently.
-  3. Leader election via DB locks: multiple workers can run without
-     coordination — the DB handles mutual exclusion at the row level.
-  4. Batch processing with backpressure: configurable batch size limits
-     memory usage and prevents one slow consumer from blocking others.
-  5. Graceful shutdown: SIGTERM/SIGINT handling with drain period.
+Claiming model
+--------------
+Rows are claimed with a **lease**: a worker stamps ``claimed_at`` inside a single
+committed transaction, and only rows that are unclaimed (or whose lease has
+expired) are eligible. This gives at-least-once delivery with no duplicate
+processing between healthy workers, and it works identically on SQLite and
+PostgreSQL.
 
-In production (AWS), this would publish events to SNS/SQS/Kafka.
-Locally, it logs processed events and updates their processed_at timestamp.
+The previous implementation relied on ``SELECT ... FOR UPDATE SKIP LOCKED`` with a
+try/except "SQLite fallback". That fallback was unreachable — the clause is built
+lazily and SQLite's dialect simply drops it at compile time — so on SQLite two
+workers claimed identical batches, and on PostgreSQL the session closed (releasing
+the row locks) before processing even began.
 """
 
 from __future__ import annotations
 
+import os
 import signal
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 
 from churn_system.config.config import CONFIG
 from churn_system.events.db import OutboxEvent, SessionLocal, init_db, now_utc
@@ -39,12 +40,17 @@ logger = get_logger(__name__, CONFIG["logging"].get("worker", "worker.log"))
 POLL_INTERVAL = int(CONFIG.get("worker", {}).get("poll_interval_seconds", 5))
 BATCH_SIZE = int(CONFIG.get("worker", {}).get("batch_size", 50))
 MAX_WORKERS = int(CONFIG.get("worker", {}).get("max_workers", 4))
+# How long a claim is honoured before another worker may retry the row.
+CLAIM_LEASE_SECONDS = int(
+    os.environ.get("CHURN_OUTBOX_LEASE_SECONDS", str(max(POLL_INTERVAL * 6, 60)))
+)
+MAX_ATTEMPTS = int(os.environ.get("CHURN_OUTBOX_MAX_ATTEMPTS", "5"))
 
 # Graceful shutdown flag
 _shutdown_event = threading.Event()
 
 
-def _handle_signal(signum, frame):  # noqa: ARG001
+def _handle_signal(signum, frame):
     logger.info("Shutdown signal received (signal=%d) — draining current batch", signum)
     _shutdown_event.set()
 
@@ -53,10 +59,8 @@ def _process_single_event(event_id: int, event_type: str, payload: dict) -> bool
     """
     Process a single outbox event.
 
-    In production, this would publish to a message broker (SNS/SQS/Kafka).
-    For now, it logs the event and simulates processing.
-
-    Returns True if processing succeeded.
+    In production this would publish to a message broker (SNS/SQS/Kafka). For now it
+    logs the event; returning False marks the event for retry.
     """
     logger.info(
         "Processing outbox event | id=%d | type=%s | request_id=%s",
@@ -64,68 +68,105 @@ def _process_single_event(event_id: int, event_type: str, payload: dict) -> bool
         event_type,
         payload.get("request_id", "unknown"),
     )
-
-    # In a real distributed system, this would be:
-    # - boto3.client('sns').publish(TopicArn=..., Message=json.dumps(payload))
-    # - boto3.client('sqs').send_message(QueueUrl=..., MessageBody=json.dumps(payload))
-    # - kafka_producer.send(topic, value=payload)
-
-    # Simulate processing latency (remove in production)
-    # time.sleep(0.01)
-
     return True
+
+
+def _claim_batch(limit: int) -> list[tuple[int, str, dict]]:
+    """
+    Atomically claim up to ``limit`` unprocessed events.
+
+    The claim is a committed UPDATE, so a concurrent worker sees the stamped
+    ``claimed_at`` and skips those rows. Rows whose lease has expired become
+    claimable again, which is what makes a crashed worker's backlog recoverable.
+    """
+    cutoff = now_utc() - timedelta(seconds=CLAIM_LEASE_SECONDS)
+
+    with SessionLocal() as session:
+        candidates = session.execute(
+            select(OutboxEvent.id)
+            .where(
+                OutboxEvent.processed_at.is_(None),
+                OutboxEvent.attempts < MAX_ATTEMPTS,
+                or_(
+                    OutboxEvent.claimed_at.is_(None),
+                    OutboxEvent.claimed_at < cutoff,
+                ),
+            )
+            .order_by(OutboxEvent.created_at.asc())
+            .limit(limit)
+        ).scalars().all()
+
+        if not candidates:
+            return []
+
+        claimed_at = now_utc()
+        result = session.execute(
+            update(OutboxEvent)
+            .where(
+                OutboxEvent.id.in_(candidates),
+                OutboxEvent.processed_at.is_(None),
+                or_(
+                    OutboxEvent.claimed_at.is_(None),
+                    OutboxEvent.claimed_at < cutoff,
+                ),
+            )
+            .values(claimed_at=claimed_at, attempts=OutboxEvent.attempts + 1)
+        )
+        session.commit()
+
+        if not result.rowcount:
+            return []
+
+        # Re-read only the rows this worker actually won.
+        rows = session.execute(
+            select(OutboxEvent).where(
+                OutboxEvent.id.in_(candidates),
+                OutboxEvent.claimed_at == claimed_at,
+            )
+        ).scalars().all()
+
+        return [(row.id, row.event_type, dict(row.payload)) for row in rows]
+
+
+def _mark_processed(event_ids: list[int]) -> None:
+    if not event_ids:
+        return
+    with SessionLocal() as session:
+        session.execute(
+            update(OutboxEvent)
+            .where(OutboxEvent.id.in_(event_ids))
+            .values(processed_at=now_utc())
+        )
+        session.commit()
+
+
+def _release_claims(event_ids: list[int]) -> None:
+    """Drop the lease on failed rows so they are retried promptly."""
+    if not event_ids:
+        return
+    with SessionLocal() as session:
+        session.execute(
+            update(OutboxEvent)
+            .where(OutboxEvent.id.in_(event_ids))
+            .values(claimed_at=None)
+        )
+        session.commit()
 
 
 def _claim_and_process_batch() -> int:
     """
-    Claim a batch of unprocessed outbox events using row-level locking,
-    then process them concurrently.
+    Claim a batch of unprocessed outbox events, then process them concurrently.
 
-    Uses SELECT ... FOR UPDATE SKIP LOCKED to ensure that multiple worker
-    instances can safely run in parallel. Each worker claims its own batch
-    without blocking other workers.
-
-    Returns the number of events processed.
+    Returns the number of events successfully processed.
     """
     init_db()
 
-    with SessionLocal() as session:
-        # Claim unprocessed events with row-level locking.
-        # FOR UPDATE SKIP LOCKED is the distributed systems primitive that
-        # enables concurrent worker instances without external coordination.
-        # - FOR UPDATE: locks the selected rows
-        # - SKIP LOCKED: if another worker already locked a row, skip it
-        #
-        # Note: SQLite doesn't support SKIP LOCKED — for local dev we use
-        # a simpler SELECT. In production (PostgreSQL), the full locking
-        # semantics apply.
-        stmt = (
-            select(OutboxEvent)
-            .where(OutboxEvent.processed_at.is_(None))
-            .order_by(OutboxEvent.created_at.asc())
-            .limit(BATCH_SIZE)
-        )
+    event_data = _claim_batch(BATCH_SIZE)
+    if not event_data:
+        return 0
 
-        # PostgreSQL: add row-level locking for concurrent workers
-        try:
-            stmt = stmt.with_for_update(skip_locked=True)
-        except Exception:
-            # SQLite fallback — no row-level locking available
-            pass
+    logger.info("Claimed %d outbox events for processing", len(event_data))
 
-        events = session.execute(stmt).scalars().all()
-
-        if not events:
-            return 0
-
-        logger.info("Claimed %d outbox events for processing", len(events))
-
-        # Prepare event data (detach from session before threading)
-        event_data = [
-            (e.id, e.event_type, dict(e.payload)) for e in events
-        ]
-
-    # Process events concurrently using ThreadPoolExecutor
     processed_ids: list[int] = []
     failed_ids: list[int] = []
 
@@ -138,8 +179,7 @@ def _claim_and_process_batch() -> int:
         for future in as_completed(future_to_id):
             event_id = future_to_id[future]
             try:
-                success = future.result()
-                if success:
+                if future.result():
                     processed_ids.append(event_id)
                 else:
                     failed_ids.append(event_id)
@@ -147,20 +187,17 @@ def _claim_and_process_batch() -> int:
                 logger.exception("Failed to process outbox event id=%d", event_id)
                 failed_ids.append(event_id)
 
-    # Mark processed events (batch UPDATE for efficiency)
+    _mark_processed(processed_ids)
     if processed_ids:
-        with SessionLocal() as session:
-            session.execute(
-                update(OutboxEvent)
-                .where(OutboxEvent.id.in_(processed_ids))
-                .values(processed_at=now_utc())
-            )
-            session.commit()
-
         logger.info("Marked %d events as processed", len(processed_ids))
 
+    _release_claims(failed_ids)
     if failed_ids:
-        logger.warning("Failed to process %d events: %s", len(failed_ids), failed_ids)
+        logger.warning(
+            "Failed to process %d events (released for retry): %s",
+            len(failed_ids),
+            failed_ids,
+        )
 
     return len(processed_ids)
 
@@ -169,23 +206,19 @@ def run_worker() -> None:
     """
     Main worker loop — polls the outbox table and processes events.
 
-    Runs indefinitely until SIGTERM/SIGINT is received. Each iteration:
-    1. Claims a batch of unprocessed events (with row-level locking)
-    2. Processes them concurrently
-    3. Marks them as processed
-    4. Sleeps for POLL_INTERVAL seconds
-
-    Multiple instances of this worker can run in parallel (horizontally
-    scaled) — the database row-level locking ensures no duplicate processing.
+    Runs until SIGTERM/SIGINT. Multiple instances can run in parallel; the
+    lease-based claim in ``_claim_batch`` keeps them from processing the same row.
     """
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
     logger.info(
-        "Outbox consumer worker started | poll_interval=%ds | batch_size=%d | max_workers=%d",
+        "Outbox consumer started | poll_interval=%ds | batch_size=%d | max_workers=%d "
+        "| lease=%ds",
         POLL_INTERVAL,
         BATCH_SIZE,
         MAX_WORKERS,
+        CLAIM_LEASE_SECONDS,
     )
 
     total_processed = 0
@@ -197,9 +230,7 @@ def run_worker() -> None:
 
             if count > 0:
                 logger.info(
-                    "Batch complete | processed=%d | total=%d",
-                    count,
-                    total_processed,
+                    "Batch complete | processed=%d | total=%d", count, total_processed
                 )
             else:
                 logger.debug("No pending events — sleeping %ds", POLL_INTERVAL)
@@ -207,7 +238,6 @@ def run_worker() -> None:
         except Exception:
             logger.exception("Worker batch processing failed — will retry")
 
-        # Interruptible sleep using the shutdown event
         _shutdown_event.wait(timeout=POLL_INTERVAL)
 
     logger.info("Worker shutting down gracefully | total_processed=%d", total_processed)
