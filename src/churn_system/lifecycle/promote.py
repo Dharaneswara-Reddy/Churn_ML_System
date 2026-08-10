@@ -1,7 +1,11 @@
-import json
-import shutil
-from pathlib import Path
+"""Promotion of a trained experiment bundle into the production serving slot."""
 
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from churn_system.artifacts import load_metadata, swap_model_bundle
 from churn_system.config.config import CONFIG
 from churn_system.lifecycle.lineage import record_lineage
 from churn_system.logging.logger import get_logger
@@ -9,23 +13,23 @@ from churn_system.logging.logger import get_logger
 logger = get_logger(__name__, CONFIG["logging"]["lifecycle"])
 
 
-def load_metadata(path: Path):
-    with open(path, "r") as f:
-        return json.load(f)
-
-
-def schemas_match(prod_meta, new_meta):
+def schemas_match(prod_meta: dict[str, Any], new_meta: dict[str, Any]) -> bool:
     prod_schema = prod_meta.get("feature_schema", [])
     new_schema = new_meta.get("feature_schema", [])
 
     return prod_schema == new_schema
 
 
-def promote_model(version: str):
+def promote_model(version: str) -> bool:
     """
     Promote a trained model version to production.
 
-    Ensures schema compatibility before promotion.
+    Ensures schema compatibility before promotion, and swaps the bundle atomically
+    so an interrupted promotion cannot leave production without a model.
+
+    Returns True when the model was promoted, False when promotion was refused.
+    Callers must check the result — a refused promotion leaves the previous model
+    serving, which is safe but means the challenger did not go live.
     """
 
     experiments_dir = Path(CONFIG["paths"]["experiments_dir"])
@@ -46,7 +50,7 @@ def promote_model(version: str):
     parent_model = None
     existing_metadata_path = target / "metadata.json"
 
-    # ✅ Schema Safety Check
+    # Schema safety check — serving depends on an exact, ordered feature match.
     if existing_metadata_path.exists():
         prod_metadata = load_metadata(existing_metadata_path)
 
@@ -54,20 +58,19 @@ def promote_model(version: str):
 
         if not schemas_match(prod_metadata, new_metadata):
             logger.error(
-                "Feature schema mismatch detected. Promotion blocked."
+                "Feature schema mismatch — promotion of %s blocked. "
+                "Production has %d features, challenger has %d.",
+                version,
+                len(prod_metadata.get("feature_schema", [])),
+                len(new_metadata.get("feature_schema", [])),
             )
-            logger.error("Production and challenger schemas differ.")
-            return
+            return False
 
-    # Promote
-    if target.exists():
-        shutil.rmtree(target)
+    swap_model_bundle(source, target)
 
-    shutil.copytree(source, target)
+    logger.info("Model %s promoted to production.", version)
 
-    logger.info(f"Model {version} promoted to production.")
-
-    # P1: If this experiment was logged to MLflow Model Registry, promote its stage too.
+    # If this experiment was logged to the MLflow Model Registry, promote its stage too.
     try:
         mlflow_uri = new_metadata.get("mlflow_model_uri")
         if (
@@ -97,3 +100,5 @@ def promote_model(version: str):
         trigger="drift_retraining",
         parent_model=parent_model,
     )
+
+    return True
