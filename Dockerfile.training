@@ -1,16 +1,30 @@
-# One-off or scheduled training — mount data/ and configure paths via env
+# Training, scheduler and worker image — mount data/ and models/ and set paths via env
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app/src
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/src
+
+# Pick up base-image security patches published since the tag was built, then drop
+# the apt lists so they do not ship in the layer.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
 
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 COPY scripts ./scripts
+COPY alembic.ini ./
+COPY alembic ./alembic
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . \
+    && chown -R appuser:appuser /app
+
+USER appuser
 
 # Override with CHURN_RAW_DATA_PATH, CHURN_EXPERIMENTS_DIR, etc.
 CMD ["python", "-m", "churn_system.training.train"]

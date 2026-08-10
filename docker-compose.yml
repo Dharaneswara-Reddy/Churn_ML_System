@@ -1,17 +1,36 @@
+x-app-env: &app-env
+  # No `:-` default on the API key: an unset key must fail the stack, not silently
+  # start it with authentication disabled. Set CHURN_ALLOW_ANONYMOUS=1 for local runs.
+  CHURN_API_KEY: ${CHURN_API_KEY:?set CHURN_API_KEY in .env, or CHURN_ALLOW_ANONYMOUS=1 for local dev}
+  CHURN_ADMIN_API_KEY: ${CHURN_ADMIN_API_KEY:-}
+  CHURN_ALLOW_ANONYMOUS: ${CHURN_ALLOW_ANONYMOUS:-}
+  CHURN_LOG_FORMAT: ${CHURN_LOG_FORMAT:-json}
+  CHURN_EVENT_STORE_DATABASE_URL: ${CHURN_EVENT_STORE_DATABASE_URL:-sqlite:///./data/churn_events.db}
+  CHURN_SUBJECT_KEY_SALT: ${CHURN_SUBJECT_KEY_SALT:-}
+
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+
 services:
   api:
     build:
       context: .
       dockerfile: Dockerfile
+    <<: *hardening
     ports:
       - "8000:8000"
     environment:
-      CHURN_API_KEY: ${CHURN_API_KEY:-}
+      <<: *app-env
       CHURN_DISABLE_RATE_LIMIT: ${CHURN_DISABLE_RATE_LIMIT:-}
-      CHURN_LOG_FORMAT: ${CHURN_LOG_FORMAT:-json}
+      # Trust the compose network's proxy range only — never "*", which would let
+      # any caller forge X-Forwarded-For and escape rate limiting.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
     volumes:
       - ./models:/app/models:ro
       - ./data:/app/data
+      - ./logs:/app/logs
     deploy:
       resources:
         limits:
@@ -28,10 +47,66 @@ services:
       start_period: 15s
     stop_grace_period: 30s
 
+  # Drains the transactional outbox. Previously defined in code but never deployed,
+  # so prediction events accumulated unprocessed forever.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.training
+    <<: *hardening
+    command: ["python", "-m", "churn_system.workers.outbox_consumer"]
+    environment: *app-env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  # Runs the drift -> retrain -> promote loop. Also previously undeployed, which is
+  # why the "self-healing" lifecycle never actually ran anywhere.
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.training
+    <<: *hardening
+    command: ["python", "-m", "churn_system.lifecycle.scheduler"]
+    environment:
+      <<: *app-env
+      CHURN_MLFLOW_ENABLED: ${CHURN_MLFLOW_ENABLED:-1}
+      # Tell the scheduler where to send reload notifications after a promotion,
+      # otherwise the API keeps serving the previous model until it restarts.
+      CHURN_RELOAD_ENDPOINTS: ${CHURN_RELOAD_ENDPOINTS:-http://api:8000/admin/reload-model}
+      CHURN_SCHEDULER_INTERVAL_SECONDS: ${CHURN_SCHEDULER_INTERVAL_SECONDS:-3600}
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: [lifecycle]
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
   prometheus:
     image: prom/prometheus:latest
+    <<: *hardening
+    # Bound to loopback: the UI allows arbitrary PromQL over all retained series
+    # and has no authentication of its own.
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./observability/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
@@ -48,17 +123,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.training
-    profiles:
-      - training
+    <<: *hardening
+    profiles: [training]
     environment:
+      <<: *app-env
       CHURN_RAW_DATA_PATH: ${CHURN_RAW_DATA_PATH:-data/Telco_customer_churn_raw.csv}
       CHURN_EXPERIMENTS_DIR: ${CHURN_EXPERIMENTS_DIR:-models/experiments}
       CHURN_TRAINING_REFERENCE_PATH: ${CHURN_TRAINING_REFERENCE_PATH:-data/training_reference.csv}
       CHURN_MLFLOW_ENABLED: ${CHURN_MLFLOW_ENABLED:-1}
-      CHURN_LOG_FORMAT: ${CHURN_LOG_FORMAT:-json}
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - ./logs:/app/logs
     deploy:
       resources:
         limits:
@@ -67,3 +143,16 @@ services:
         reservations:
           cpus: "1.0"
           memory: 512M
+
+  # One-shot schema migration. Run before first start and after upgrades:
+  #   docker compose --profile migrate run --rm migrate
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.training
+    <<: *hardening
+    profiles: [migrate]
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-env
+    volumes:
+      - ./data:/app/data
