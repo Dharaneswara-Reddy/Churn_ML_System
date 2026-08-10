@@ -2,42 +2,201 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
-jobs:
-  build-test:
-    runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-    steps:
-      - uses: actions/checkout@v4
+# Rapid pushes should not queue redundant runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
-      - uses: actions/setup-python@v5
+# Least privilege by default; jobs opt in to more if they ever need it.
+permissions:
+  contents: read
+
+env:
+  # Tests and CI never touch a real MLflow backend.
+  CHURN_MLFLOW_ENABLED: "0"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Ruff
+        run: ruff check src tests scripts alembic
+
+  test:
+    name: Test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # Test the version we develop on (.python-version) and the one we ship
+        # in the container. Previously CI ran only 3.12 while local was 3.10.
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Ruff
-        run: ruff check src tests scripts
+      - name: Pytest with coverage
+        run: |
+          pytest tests/ \
+            --cov=churn_system \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=70
 
-      - name: Pytest
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-py${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: warn
+
+  migrations:
+    name: Migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev]"
+
+      - name: Upgrade to head, then downgrade back
         env:
-          CHURN_MLFLOW_ENABLED: "0"
-        run: pytest tests/
+          CHURN_EVENT_STORE_DATABASE_URL: sqlite:///./ci_events.db
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
 
-      - name: Packaging
+  smoke-train:
+    name: Smoke training
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev]"
+
+      - name: Train on a synthetic dataset and verify the artifact
+        env:
+          CHURN_RAW_DATA_PATH: /tmp/smoke_churn.csv
+          CHURN_EXPERIMENTS_DIR: /tmp/churn_experiments_ci
+          CHURN_TRAINING_REFERENCE_PATH: /tmp/churn_training_ref_ci.csv
+          CHURN_PRODUCTION_MODEL_PATH: /tmp/churn_production_ci/current/model.pkl
+        run: |
+          python scripts/generate_smoke_csv.py "$CHURN_RAW_DATA_PATH" --rows 400
+          python -m churn_system.training.train
+          # An exit code of 0 only proves the pipeline did not crash. Load the
+          # artifact back and score a row so a broken pickle or a schema drift
+          # fails the build. The synthetic labels carry no learnable signal, so the
+          # metric floor only catches a catastrophically broken model, not a bad one.
+          python scripts/verify_training_artifact.py --min-roc-auc 0.4
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Build distributions
         run: |
           pip install build
           python -m build
 
-      - name: Smoke training (synthetic CSV)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build API image
+        run: docker build -f Dockerfile -t churn-api:ci .
+
+      - name: Build training image
+        run: docker build -f Dockerfile.training -t churn-train:ci .
+
+      - name: Scan API image for vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: churn-api:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Audit dependencies for known CVEs
         run: |
-          python scripts/generate_smoke_csv.py /tmp/smoke_churn.csv --rows 350
-          export CHURN_RAW_DATA_PATH=/tmp/smoke_churn.csv
-          export CHURN_EXPERIMENTS_DIR=/tmp/churn_experiments_ci
-          export CHURN_TRAINING_REFERENCE_PATH=/tmp/churn_training_ref_ci.csv
-          export CHURN_MLFLOW_ENABLED=0
-          export PYTHONPATH=src
-          python -m churn_system.training.train
+          pip install pip-audit
+          pip install -e "."
+          pip-audit --strict
+
+      - name: Scan repository for vulnerabilities and secrets
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
