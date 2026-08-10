@@ -4,6 +4,8 @@ ML LifeCycle Orchestrator
 Runs monitoring pipeline and decides whether model retraining should be executed.
 """
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
 
@@ -11,64 +13,84 @@ from churn_system.config.config import CONFIG
 from churn_system.lifecycle.model_compare import compare_models
 from churn_system.lifecycle.promote import promote_model
 from churn_system.lifecycle.rollback import rollback_if_needed
+from churn_system.lifecycle.serving_reload import notify_serving_reload
 from churn_system.logging.logger import get_logger
 from churn_system.monitoring.model_health import evaluate_model_health
 from churn_system.new_data.retraining_data import build_retraining_dataset
 from churn_system.training.train import main as train_model
 
-logger = get_logger(__name__,CONFIG["logging"]["lifecycle"])
+logger = get_logger(__name__, CONFIG["logging"]["lifecycle"])
 
 
-HEALTH_FILE = Path(CONFIG["paths"]["monitoring_dir"]) / "health_report.json"
+def _health_file() -> Path:
+    return Path(CONFIG["paths"]["monitoring_dir"]) / "health_report.json"
 
-def run_lifecycle():
+
+def run_lifecycle() -> dict[str, bool]:
     """
-    Execute Monitoring -> decision -> retraining workflow
-    """
+    Execute the monitoring -> decision -> retraining workflow.
 
-    print("\n --- Evaluation Started ---")
+    Returns a summary of what happened, so a scheduler or test can assert on the
+    outcome instead of parsing logs.
+    """
+    logger.info("--- Lifecycle evaluation started ---")
+
+    outcome = {"retrained": False, "promoted": False, "rolled_back": False}
 
     evaluate_model_health()
 
-    if not HEALTH_FILE.exists():
-        print("Health report missing. Aborting lifecycle.")
-        return
+    health_file = _health_file()
+    if not health_file.exists():
+        logger.error("Health report missing at %s. Aborting lifecycle.", health_file)
+        return outcome
 
-    with open(HEALTH_FILE, "r") as f:
+    with open(health_file, encoding="utf-8") as f:
         report = json.load(f)
 
-    retrain_needed = report.get("retraining_recommended", False)
+    if not report.get("retraining_recommended", False):
+        logger.info("Model healthy. No retraining triggered.")
+        # Still consider rollback: the running model may be unhealthy for reasons
+        # unrelated to this cycle's drift verdict.
+        outcome["rolled_back"] = rollback_if_needed()
+        logger.info("--- Lifecycle evaluation completed ---")
+        return outcome
 
-    if retrain_needed:
-        print("\n Drift Identified - preparing retraining data.")
-        build_retraining_dataset()
+    logger.info("Drift identified — preparing retraining data.")
+    build_retraining_dataset()
 
-        print("Started retraining...")
-        train_model()
+    logger.info("Starting retraining...")
+    trained_version = train_model()
+    outcome["retrained"] = True
 
-        print("Evaluating challenger model...")
+    logger.info("Evaluating challenger model %s...", trained_version)
 
-        if compare_models():
-            print("Challenger wins - promoting model.")
+    if compare_models():
+        # Promote the version we just trained rather than re-globbing for the newest
+        # directory — another training process could have produced a newer one.
+        outcome["promoted"] = promote_model(trained_version)
 
-            import re
-            pattern = re.compile(r"^churn_model_\d{8}_\d{6}$")
-            latest_version = sorted([
-                d for d in Path(CONFIG["paths"]["experiments_dir"]).glob("churn_model_*")
-                if d.is_dir() and pattern.match(d.name) and (d / "metadata.json").exists()
-            ])[-1].name
-
-            promote_model(latest_version)
+        if outcome["promoted"]:
+            logger.info("Challenger promoted: %s", trained_version)
+            notify_serving_reload()
         else:
-            print("Challenger Rejected. Keep current production model.")
-
+            logger.error(
+                "Promotion of %s was refused (schema mismatch). "
+                "Production still serves the previous model.",
+                trained_version,
+            )
     else:
-        print("\n Model healthy, No retraining triggered.")
+        logger.info("Challenger rejected. Keeping current production model.")
 
-    rollback_if_needed()
+    if outcome["promoted"]:
+        # Do not roll back a model that was promoted seconds ago. The health report
+        # still carries the drift verdict that triggered *this* cycle, so feeding it
+        # to the rollback check would revert every successful promotion immediately.
+        logger.info("Skipping rollback check — a new model was promoted this cycle.")
+    else:
+        outcome["rolled_back"] = rollback_if_needed()
 
-    print("\n --- Evaluation is Completed ---")
-
+    logger.info("--- Lifecycle evaluation completed ---")
+    return outcome
 
 
 if __name__ == "__main__":
