@@ -44,6 +44,17 @@ class PredictionEvent(Base):
     # Redacted features only (no CustomerID / geo)
     features: Mapped[dict[str, Any]] = mapped_column(JSON)
 
+    # Ground truth, supplied later via the feedback endpoint. Without this the
+    # system can only measure input drift and can never tell whether a past
+    # prediction was actually correct.
+    label: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    labeled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Pseudonymous, salted subject key. Lets a data-subject erasure request find
+    # every row for a customer without storing the customer id itself.
+    subject_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
 
 class OutboxEvent(Base):
     """
@@ -58,8 +69,35 @@ class OutboxEvent(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Lease-based claiming. A worker stamps claimed_at to take ownership of a row;
+    # the claim expires after a lease interval so a crashed worker's rows are
+    # retried rather than stranded. Without this, "claiming" relied on
+    # SELECT ... FOR UPDATE SKIP LOCKED, which SQLite silently ignores — two
+    # workers would then process every event twice.
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
-def init_db() -> None:
+
+_SCHEMA_READY = False
+
+
+def init_db(force: bool = False) -> None:
+    """
+    Ensure the event store schema exists.
+
+    Idempotent and cached: this used to run ``create_all`` — a set of reflection
+    queries — on *every* prediction, every worker poll and every monitoring read,
+    adding database round-trips to the request hot path.
+
+    Note that ``create_all`` only ever creates missing tables; it cannot alter
+    existing ones. Schema changes go through Alembic (see ``alembic/``).
+    """
+    global _SCHEMA_READY
+    if _SCHEMA_READY and not force:
+        return
+
     # Ensure SQLite file parent exists (CI and fresh environments)
     if ENGINE.url.get_backend_name() == "sqlite":
         db_file = ENGINE.url.database
@@ -69,6 +107,7 @@ def init_db() -> None:
                 db_path = Path.cwd() / db_path
             db_path.parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=ENGINE)
+    _SCHEMA_READY = True
 
 
 def now_utc() -> datetime:
