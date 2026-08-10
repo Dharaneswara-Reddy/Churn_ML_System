@@ -20,6 +20,16 @@ model_promotion:
   metric: "pr_auc"
   min_improvement: 0.0
 
+monitoring:
+  # PSI above this counts as a drifted feature
+  psi_threshold: 0.2
+  psi_bins: 10
+  # Below this many production rows, drift is reported as unknown rather than
+  # computed — small samples produce huge PSI values against any reference.
+  min_production_samples: 20
+  # How many drifted features it takes to recommend retraining
+  drift_feature_limit: 2
+
 api:
   # slowapi format, e.g. "60/minute", "100/hour"
   rate_limit: "120/minute"
