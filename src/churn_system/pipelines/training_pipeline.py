@@ -23,8 +23,8 @@ def run_training_pipeline():
         train_model()
         logger.info("Training completed successfully.")
 
-    except Exception as e:
-        logger.exception(f"Training pipeline failed: {e}")
+    except Exception:
+        logger.exception("Training pipeline failed")
         raise
 
     logger.info("--- Training Pipeline Finished ---")

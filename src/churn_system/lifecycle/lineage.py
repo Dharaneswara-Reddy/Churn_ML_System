@@ -9,13 +9,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from churn_system.config.config import CONFIG
+from churn_system.logging.logger import get_logger
+
+logger = get_logger(__name__, CONFIG["logging"]["lifecycle"])
 
 LINEAGE_PATH = Path(CONFIG["paths"]["lineage_path"])
 LINEAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 def load_lineage():
     if LINEAGE_PATH.exists():
-        with open(LINEAGE_PATH, "r") as f:
+        with open(LINEAGE_PATH) as f:
             return json.load(f)
     return []
 
@@ -42,4 +45,4 @@ def record_lineage(model_version : str,metrics : dict,dataset_used : str,trigger
     lineage.append(record)
     save_lineage(lineage)
 
-    print(f"Lineage recorded for {model_version}")
+    logger.info("Lineage recorded for %s", model_version)

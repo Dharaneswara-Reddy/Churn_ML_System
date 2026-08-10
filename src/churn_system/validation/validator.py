@@ -17,7 +17,7 @@ _TYPE_MAP: dict[str, Any] = {
 
 
 def load_schema_yaml(path: Path) -> dict[str, Any]:
-    with open(path, "r") as f:
+    with open(path) as f:
         return yaml.safe_load(f)
 
 

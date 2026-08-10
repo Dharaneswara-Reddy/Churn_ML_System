@@ -20,7 +20,10 @@ from churn_system.schema import validate_inference_data
 def _load_model():
     model_path = Path(CONFIG["paths"]["production_model"])
     with open(model_path, "rb") as f:
-        return pickle.load(f)
+        # Trusted artifact: written by our own training pipeline and promoted
+        # through validate_model_bundle. See serving/model_registry.py for the
+        # same trust boundary on the serving path.
+        return pickle.load(f)  # noqa: S301
 
 
 def run_inference(
