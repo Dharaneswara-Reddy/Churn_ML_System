@@ -117,6 +117,24 @@ PREDICTED_NEGATIVE_RATE = Gauge(
     "Fraction of predictions classified as negative (no churn)",
 )
 
+# ── 7. Event Store Metrics ───────────────────────────────────────────────────
+
+EVENT_WRITE_FAILURES_TOTAL = Counter(
+    "churn_event_write_failures_total",
+    "Prediction events that could not be persisted after retries",
+)
+
+EVENT_WRITE_DROPPED_TOTAL = Counter(
+    "churn_event_write_dropped_total",
+    "Prediction events dropped because the event writer queue was saturated",
+)
+
+LABELS_RECORDED_TOTAL = Counter(
+    "churn_labels_recorded_total",
+    "Ground-truth labels attached to past predictions",
+    ["outcome"],
+)
+
 
 def render_latest() -> tuple[bytes, str]:
     return generate_latest(), CONTENT_TYPE_LATEST
