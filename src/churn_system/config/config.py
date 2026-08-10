@@ -39,7 +39,7 @@ def _set_int_if_env(cfg: dict[str, Any], section: str, key: str, env_name: str) 
 
 
 def load_config() -> dict[str, Any]:
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    with open(CONFIG_PATH, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     # CI / containers: override paths without editing YAML
@@ -61,6 +61,14 @@ def load_config() -> dict[str, Any]:
         "model_promotion",
         "min_improvement",
         "CHURN_MODEL_PROMOTION_MIN_IMPROVEMENT",
+    )
+    _set_float_if_env(cfg, "monitoring", "psi_threshold", "CHURN_PSI_THRESHOLD")
+    _set_int_if_env(cfg, "monitoring", "psi_bins", "CHURN_PSI_BINS")
+    _set_int_if_env(
+        cfg, "monitoring", "min_production_samples", "CHURN_MIN_PRODUCTION_SAMPLES"
+    )
+    _set_int_if_env(
+        cfg, "monitoring", "drift_feature_limit", "CHURN_DRIFT_FEATURE_LIMIT"
     )
 
     return cfg
