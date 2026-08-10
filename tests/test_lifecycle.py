@@ -6,8 +6,21 @@ import json
 
 import pytest
 
+from churn_system.lifecycle.model_compare import compare_models
 from churn_system.lifecycle.promote import promote_model, schemas_match
 from churn_system.lifecycle.rollback import rollback_if_needed
+
+
+def _write_bundle(directory, *, schema, metrics, version="20260101_000000"):
+    """Create a minimal model bundle on disk."""
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "model.pkl").write_bytes(b"model")
+    (directory / "metadata.json").write_text(
+        json.dumps(
+            {"model_version": version, "feature_schema": schema, "metrics": metrics}
+        )
+    )
+    return directory
 
 
 @pytest.fixture
@@ -76,7 +89,7 @@ class TestPromoteModel:
     """Test model promotion workflow."""
 
     def test_promote_creates_production_copy(self, model_dirs, experiment_v1, monkeypatch):
-        experiments_dir, production_dir = model_dirs
+        _, production_dir = model_dirs
 
         # Patch lineage to avoid file I/O side effects
         monkeypatch.setattr(
@@ -96,6 +109,134 @@ class TestPromoteModel:
             promote_model("churn_model_99999999_000000")
 
 
+    def test_promotion_blocked_on_schema_mismatch(self, model_dirs, experiment_v1):
+        """
+        The schema interlock must refuse the promotion and leave production intact.
+
+        Serving selects and orders inference columns from the production
+        metadata.json, so promoting a bundle with a different feature schema breaks
+        every prediction. This guard previously never executed under test.
+        """
+        _, production_dir = model_dirs
+        current = production_dir / "current"
+        current.mkdir(parents=True)
+        (current / "model.pkl").write_bytes(b"incumbent_model")
+        (current / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "model_version": "20260101_000000",
+                    "feature_schema": ["A", "B"],  # challenger has ["A", "B", "C"]
+                    "metrics": {"roc_auc": 0.80},
+                }
+            )
+        )
+
+        promoted = promote_model("churn_model_20260301_120000")
+
+        assert promoted is False, "mismatched schema must not be promoted"
+        assert (current / "model.pkl").read_bytes() == b"incumbent_model"
+        assert json.loads((current / "metadata.json").read_text())["feature_schema"] == [
+            "A",
+            "B",
+        ]
+
+    def test_promotion_reports_success(self, model_dirs, experiment_v1, monkeypatch):
+        """Callers must be able to tell a promotion from a refusal."""
+        monkeypatch.setattr(
+            "churn_system.lifecycle.promote.record_lineage",
+            lambda **kwargs: None,
+        )
+
+        assert promote_model("churn_model_20260301_120000") is True
+
+    def test_promotion_leaves_no_staging_directories(
+        self, model_dirs, experiment_v1, monkeypatch
+    ):
+        """The atomic swap must clean up after itself."""
+        _, production_dir = model_dirs
+        monkeypatch.setattr(
+            "churn_system.lifecycle.promote.record_lineage",
+            lambda **kwargs: None,
+        )
+
+        promote_model("churn_model_20260301_120000")
+
+        leftovers = [p.name for p in production_dir.iterdir() if p.name.startswith(".")]
+        assert leftovers == [], f"staging directories left behind: {leftovers}"
+
+
+class TestCompareModels:
+    """The promotion gate must honour the configured metric and margin."""
+
+    @pytest.fixture
+    def champion_and_challenger(self, isolated_paths):
+        def build(champion_metrics, challenger_metrics):
+            _write_bundle(
+                isolated_paths["production_model"].parent,
+                schema=["A", "B"],
+                metrics=champion_metrics,
+            )
+            _write_bundle(
+                isolated_paths["experiments_dir"] / "churn_model_20260301_120000",
+                schema=["A", "B"],
+                metrics=challenger_metrics,
+            )
+
+        return build
+
+    def test_uses_configured_metric_not_roc_auc(
+        self, champion_and_challenger, monkeypatch
+    ):
+        """
+        A challenger that improves PR-AUC but dips slightly on ROC-AUC must win.
+
+        Training selects its winner by PR-AUC (the target is imbalanced), so judging
+        promotion by ROC-AUC could reject the model training just chose.
+        """
+        from churn_system.config import config as cfg
+
+        monkeypatch.setitem(cfg.CONFIG["model_promotion"], "metric", "pr_auc")
+        champion_and_challenger(
+            {"roc_auc": 0.8225, "pr_auc": 0.22},
+            {"roc_auc": 0.8220, "pr_auc": 0.31},
+        )
+
+        assert compare_models() is True
+
+    def test_respects_min_improvement_margin(
+        self, champion_and_challenger, monkeypatch
+    ):
+        """A negligible gain must not trigger a production model swap."""
+        from churn_system.config import config as cfg
+
+        monkeypatch.setitem(cfg.CONFIG["model_promotion"], "metric", "pr_auc")
+        monkeypatch.setitem(cfg.CONFIG["model_promotion"], "min_improvement", 0.01)
+        champion_and_challenger({"pr_auc": 0.30}, {"pr_auc": 0.3000001})
+
+        assert compare_models() is False
+
+    def test_refuses_when_metric_missing(self, champion_and_challenger, monkeypatch):
+        """
+        Missing metrics previously defaulted to 0, so any challenger beat a champion
+        whose metadata lacked the key.
+        """
+        from churn_system.config import config as cfg
+
+        monkeypatch.setitem(cfg.CONFIG["model_promotion"], "metric", "pr_auc")
+        champion_and_challenger({"roc_auc": 0.9}, {"pr_auc": 0.05})
+
+        assert compare_models() is False
+
+    def test_promotes_first_model_when_no_champion(self, isolated_paths):
+        _write_bundle(
+            isolated_paths["experiments_dir"] / "churn_model_20260301_120000",
+            schema=["A", "B"],
+            metrics={"pr_auc": 0.2},
+        )
+
+        assert compare_models() is True
+
+
 class TestRollback:
     """Test rollback logic."""
 
@@ -106,7 +247,7 @@ class TestRollback:
         monkeypatch.setitem(cfg.CONFIG["paths"], "lineage_path", str(tmp_path / "lineage.json"))
 
         # Should not raise — just skip
-        rollback_if_needed()
+        assert rollback_if_needed() is False
 
     def test_rollback_skipped_when_model_healthy(self, tmp_path, monkeypatch):
         from churn_system.config import config as cfg
@@ -119,4 +260,79 @@ class TestRollback:
         monkeypatch.setitem(cfg.CONFIG["paths"], "monitoring_dir", str(monitoring_dir))
         monkeypatch.setitem(cfg.CONFIG["paths"], "lineage_path", str(tmp_path / "lineage.json"))
 
-        rollback_if_needed()
+        assert rollback_if_needed() is False
+
+    def test_rollback_does_not_touch_paths_outside_the_test(self, isolated_paths):
+        """
+        Guard against the whole class of bug this test file used to have.
+
+        ``rollback.py`` bound its paths at import, so monkeypatching CONFIG afterwards
+        had no effect and the "skipped" cases actually deleted and recopied the real
+        models/production/current directory on every run.
+        """
+        from churn_system.lifecycle import rollback
+
+        assert rollback._health_path().is_relative_to(isolated_paths["monitoring_dir"].parent)
+        assert rollback._lineage_path() == isolated_paths["lineage_path"]
+
+    def test_rollback_restores_previous_model(self, isolated_paths):
+        """The actual restore path — previously never executed by any test."""
+        experiments = isolated_paths["experiments_dir"]
+        production = isolated_paths["production_model"].parent
+
+        for version, payload in [
+            ("churn_model_20260101_000000", b"old_model"),
+            ("churn_model_20260201_000000", b"new_model"),
+        ]:
+            exp = experiments / version
+            exp.mkdir(parents=True)
+            (exp / "model.pkl").write_bytes(payload)
+            (exp / "metadata.json").write_text(json.dumps({"model_version": version}))
+
+        production.mkdir(parents=True)
+        (production / "model.pkl").write_bytes(b"new_model")
+
+        isolated_paths["lineage_path"].parent.mkdir(parents=True, exist_ok=True)
+        isolated_paths["lineage_path"].write_text(
+            json.dumps(
+                [
+                    {"model_version": "churn_model_20260101_000000"},
+                    {"model_version": "churn_model_20260201_000000"},
+                ]
+            )
+        )
+        (isolated_paths["monitoring_dir"] / "health_report.json").write_text(
+            json.dumps({"retraining_recommended": True})
+        )
+
+        assert rollback_if_needed() is True
+        assert (production / "model.pkl").read_bytes() == b"old_model"
+
+    def test_rollback_refuses_when_lineage_has_one_distinct_version(
+        self, isolated_paths
+    ):
+        """
+        Repeated promotions of the same version must not count as a rollback target.
+
+        Lineage records every promotion, so ``lineage[-2]`` is often the version
+        already in production — "restoring" it is a no-op dressed up as recovery.
+        """
+        production = isolated_paths["production_model"].parent
+        production.mkdir(parents=True)
+        (production / "model.pkl").write_bytes(b"current_model")
+
+        isolated_paths["lineage_path"].parent.mkdir(parents=True, exist_ok=True)
+        isolated_paths["lineage_path"].write_text(
+            json.dumps(
+                [
+                    {"model_version": "churn_model_20260201_000000"},
+                    {"model_version": "churn_model_20260201_000000"},
+                ]
+            )
+        )
+        (isolated_paths["monitoring_dir"] / "health_report.json").write_text(
+            json.dumps({"retraining_recommended": True})
+        )
+
+        assert rollback_if_needed() is False
+        assert (production / "model.pkl").read_bytes() == b"current_model"

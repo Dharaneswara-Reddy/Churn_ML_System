@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from churn_system.monitoring.drift import calculate_psi
 
@@ -50,3 +51,72 @@ class TestCalculatePSI:
             psi = calculate_psi(expected, actual, bins=bins)
             assert isinstance(psi, float)
             assert psi >= 0
+
+
+class TestPSIDegenerateInputs:
+    """Edge cases where a naive PSI silently reports 'stable'."""
+
+    def test_empty_production_raises_rather_than_returning_nan(self):
+        """
+        An empty production feed is a monitoring failure, not a stable distribution.
+
+        Returning NaN makes every ``psi > threshold`` check False, so a total
+        collapse of the prediction stream would read as a healthy model.
+        """
+        expected = pd.Series(np.random.RandomState(0).normal(0, 1, 100))
+        with pytest.raises(ValueError):
+            calculate_psi(expected, pd.Series([], dtype=float))
+
+    def test_empty_reference_raises(self):
+        actual = pd.Series(np.random.RandomState(0).normal(0, 1, 100))
+        with pytest.raises(ValueError):
+            calculate_psi(pd.Series([], dtype=float), actual)
+
+    def test_all_nan_production_raises(self):
+        expected = pd.Series(np.random.RandomState(0).normal(0, 1, 100))
+        with pytest.raises(ValueError):
+            calculate_psi(expected, pd.Series([np.nan] * 50))
+
+    def test_out_of_range_production_is_counted_not_discarded(self):
+        """
+        Values outside the reference range must register as drift.
+
+        ``np.histogram`` with fixed edges drops them, and dividing by the full sample
+        length then spreads the loss across every bin — badly understating drift.
+        Here 30% of production is off-scale, which must be flagged.
+        """
+        rng = np.random.default_rng(0)
+        expected = pd.Series(rng.normal(50, 10, 5000))
+        actual = expected.sample(1000, random_state=1).reset_index(drop=True).copy()
+        actual.iloc[:300] = 999_999.0
+
+        psi = calculate_psi(expected, actual)
+
+        assert psi > 0.2, f"30% out-of-range data must flag drift, got PSI={psi}"
+
+    def test_identical_distributions_are_exactly_zero(self):
+        """Smoothing must not manufacture drift between a series and itself."""
+        rng = np.random.default_rng(7)
+        data = pd.Series(rng.normal(0, 1, 1000))
+
+        assert calculate_psi(data, data.copy()) == pytest.approx(0.0, abs=1e-9)
+
+    def test_constant_column_is_stable_against_itself(self):
+        constant = pd.Series([5.0] * 200)
+
+        assert calculate_psi(constant, constant.copy()) == pytest.approx(0.0, abs=1e-9)
+
+    def test_sparse_reference_bins_do_not_explode(self):
+        """
+        A skewed reference leaves near-empty bins; resampling from it is not drift.
+
+        Flooring already-normalised proportions used to turn ~1% of production mass
+        in one sparse bin into roughly half the drift threshold.
+        """
+        rng = np.random.default_rng(3)
+        skewed = pd.Series(
+            np.concatenate([rng.normal(0, 1, 4900), rng.normal(50, 1, 100)])
+        )
+        resampled = skewed.sample(1000, random_state=5).reset_index(drop=True)
+
+        assert calculate_psi(skewed, resampled) < 0.1

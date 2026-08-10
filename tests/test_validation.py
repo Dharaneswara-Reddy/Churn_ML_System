@@ -18,9 +18,8 @@ def _make_valid_df(n: int = 5) -> pd.DataFrame:
     import random
 
     rng = random.Random(42)
-    rows = []
-    for i in range(n):
-        rows.append({
+    rows = [
+        {
             "CustomerID": f"C{i}",
             "Count": 1,
             "Country": "US",
@@ -54,7 +53,9 @@ def _make_valid_df(n: int = 5) -> pd.DataFrame:
             "Churn Score": 80,
             "CLTV": 3000,
             "Churn Reason": "Price",
-        })
+        }
+        for i in range(n)
+    ]
     return pd.DataFrame(rows)
 
 
@@ -84,4 +85,4 @@ class TestValidateTrainingData:
         assert len(REQUIRED_COLUMNS) == 33
 
     def test_allowed_target_values(self):
-        assert ALLOWED_TARGET_VALUES == {0, 1}
+        assert {0, 1} == ALLOWED_TARGET_VALUES
