@@ -8,7 +8,7 @@ PSI measures how much a feature's distribution has
 shifted between training and production data.
 """
 
-from pathlib import Path
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd
@@ -16,20 +16,30 @@ import pandas as pd
 from churn_system.config.config import CONFIG
 from churn_system.logging.logger import get_logger
 
-logger = get_logger(__name__,CONFIG["logging"]["monitoring"])
+logger = get_logger(__name__, CONFIG["logging"]["monitoring"])
 
 
-TRAIN_PATH = Path(CONFIG["paths"]["training_reference"])
-PROD_PATH = Path(CONFIG["paths"]["prediction_log_csv"])  # legacy; DB is preferred
+def psi_threshold() -> float:
+    return float(CONFIG.get("monitoring", {}).get("psi_threshold", 0.2))
 
 
-PSI_THRESHOLD = 0.2
+def psi_bins() -> int:
+    return int(CONFIG.get("monitoring", {}).get("psi_bins", 10))
 
 
+def min_production_samples() -> int:
+    return int(CONFIG.get("monitoring", {}).get("min_production_samples", 20))
 
-def calculate_psi(expected: pd.Series,
-                  actual: pd.Series,
-                  bins: int = 10) -> float:
+
+# Kept for backwards compatibility with callers that imported the constant.
+PSI_THRESHOLD = psi_threshold()
+
+
+def calculate_psi(
+    expected: pd.Series,
+    actual: pd.Series,
+    bins: int | None = None,
+) -> float:
     """
     Compute Population Stability Index (PSI).
 
@@ -39,89 +49,115 @@ def calculate_psi(expected: pd.Series,
         Training distribution (reference).
     actual : pd.Series
         Production distribution.
-    bins : int
-        Number of histogram bins.
+    bins : int, optional
+        Number of interior histogram bins. Defaults to the configured value.
 
     Returns
     -------
     float
-        PSI score.
+        PSI score. Always finite and non-negative.
+
+    Raises
+    ------
+    ValueError
+        If either series is empty after dropping NaNs. An empty production feed is
+        a monitoring failure, not a stable distribution — returning NaN here would
+        make every downstream ``psi > threshold`` comparison silently False.
+
+    Notes
+    -----
+    Two corrections relative to a naive implementation:
+
+    * **Out-of-range mass is counted, not dropped.** ``np.histogram`` with fixed
+      edges discards values outside the reference range; dividing by the full
+      sample length then spreads that loss across every bin and *understates*
+      drift. Explicit underflow/overflow bins keep both distributions summing to
+      one, so production data that has moved off the reference range registers as
+      the severe drift it is.
+    * **Counts get additive (Laplace) smoothing** instead of flooring already
+      normalised proportions, which otherwise turns a single sparse reference bin
+      into a large spurious contribution.
     """
+    bin_count = psi_bins() if bins is None else bins
 
-    expected = expected.values
-    actual = actual.values
+    expected_values = pd.Series(expected).dropna().to_numpy(dtype=float)
+    actual_values = pd.Series(actual).dropna().to_numpy(dtype=float)
 
-    expected_counts, bin_edges = np.histogram(expected, bins=bins)
+    if expected_values.size == 0 or actual_values.size == 0:
+        raise ValueError(
+            "PSI requires non-empty reference and production samples "
+            f"(reference={expected_values.size}, production={actual_values.size})"
+        )
 
-    actual_counts, _ = np.histogram(actual, bins=bin_edges)
+    expected_counts, bin_edges = np.histogram(expected_values, bins=bin_count)
+    actual_counts, _ = np.histogram(actual_values, bins=bin_edges)
 
-    expected_percents = expected_counts / len(expected)
-    actual_percents = actual_counts / len(actual)
+    # Underflow / overflow buckets for values outside the reference range.
+    below = int((actual_values < bin_edges[0]).sum())
+    above = int((actual_values > bin_edges[-1]).sum())
 
-    psi_values = []
+    expected_counts = np.concatenate(([0], expected_counts, [0])).astype(float)
+    actual_counts = np.concatenate(([below], actual_counts, [above])).astype(float)
 
-    for e, a in zip(expected_percents, actual_percents):
-        # smoothing to avoid log(0)
-        e = max(e, 1e-6)
-        a = max(a, 1e-6)
+    # Additive smoothing so an empty bin on either side stays finite.
+    alpha = 0.5
+    n_bins = expected_counts.size
+    expected_percents = (expected_counts + alpha) / (expected_counts.sum() + alpha * n_bins)
+    actual_percents = (actual_counts + alpha) / (actual_counts.sum() + alpha * n_bins)
 
-        psi_values.append((a - e) * np.log(a / e))
+    psi_values = (actual_percents - expected_percents) * np.log(
+        actual_percents / expected_percents
+    )
 
     return float(np.sum(psi_values))
 
 
-
 def detect_drift() -> None:
     """
-    Compare training and production datasets and
-    report feature-level drift.
+    Compare training and production datasets and report feature-level drift.
     """
+    from churn_system.monitoring.prediction_reader import load_reference_and_production
 
-    if not TRAIN_PATH.exists():
-        print(" Missing training reference data.")
+    frames = load_reference_and_production()
+    if frames is None:
+        logger.warning("Drift report skipped: reference or production data unavailable.")
         return
 
-    from churn_system.monitoring.prediction_reader import load_predictions_df
-
-    train_df = pd.read_csv(TRAIN_PATH)
-    prod_df = load_predictions_df()
-
-    if prod_df.empty:
-        # fallback to legacy CSV if it exists
-        if PROD_PATH.exists():
-            prod_df = pd.read_csv(PROD_PATH)
-        else:
-            print(" Missing production prediction events.")
-            return
+    train_df, prod_df = frames
 
     numeric_cols = train_df.select_dtypes(include=np.number).columns
 
     if len(numeric_cols) == 0:
-        print(" No numeric columns found for drift detection.")
+        logger.warning("No numeric columns found for drift detection.")
         return
 
-    print("\n----------- PSI Drift Report -----------")
+    threshold = psi_threshold()
+    minimum = min_production_samples()
+
+    logger.info("----------- PSI Drift Report -----------")
 
     for col in numeric_cols:
-
         if col not in prod_df.columns:
             continue
 
         train_series = train_df[col].dropna()
         prod_series = prod_df[col].dropna()
 
-        # Skip if insufficient production data
-        if len(prod_series) < 20:
-            print(f"{col:<22} |  insufficient production samples")
+        if len(prod_series) < minimum:
+            logger.info(
+                "%-22s | insufficient production samples (%d < %d)",
+                col,
+                len(prod_series),
+                minimum,
+            )
             continue
 
         psi = calculate_psi(train_series, prod_series)
+        status = "DRIFT" if psi > threshold else "STABLE"
 
-        status = " DRIFT" if psi > PSI_THRESHOLD else " STABLE"
+        logger.info("%-22s | %-6s | PSI=%.4f", col, status, psi)
 
-        print(f"{col:<22} | {status} | PSI={psi:.4f}")
-
-    print("-----------------------------------------------\n")
+    logger.info("-----------------------------------------")
 
 
 # CLI entry
