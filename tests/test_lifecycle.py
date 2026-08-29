@@ -6,13 +6,28 @@ import json
 
 import pytest
 
+from churn_system.artifacts import sign_model_bundle
 from churn_system.lifecycle.model_compare import compare_models
 from churn_system.lifecycle.promote import promote_model, schemas_match
 from churn_system.lifecycle.rollback import rollback_if_needed
 
 
+def _sign(directory):
+    """
+    Sign a fixture bundle, exactly as training does.
+
+    Promotion and rollback verify the *source* bundle's signature before copying
+    it — that is what stops someone with write access to models/experiments/ from
+    having a tampered artifact blessed on promotion. A fixture that skipped signing
+    would only ever exercise the rejection path, so every bundle these tests build
+    is signed the way a real one is.
+    """
+    sign_model_bundle(directory)
+    return directory
+
+
 def _write_bundle(directory, *, schema, metrics, version="20260101_000000"):
-    """Create a minimal model bundle on disk."""
+    """Create a minimal, signed model bundle on disk."""
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "model.pkl").write_bytes(b"model")
     (directory / "metadata.json").write_text(
@@ -20,7 +35,7 @@ def _write_bundle(directory, *, schema, metrics, version="20260101_000000"):
             {"model_version": version, "feature_schema": schema, "metrics": metrics}
         )
     )
-    return directory
+    return _sign(directory)
 
 
 @pytest.fixture
@@ -57,6 +72,7 @@ def experiment_v1(model_dirs):
         "dataset": "data/test.csv",
     }
     (exp_dir / "metadata.json").write_text(json.dumps(metadata))
+    _sign(exp_dir)
 
     return exp_dir
 
@@ -330,6 +346,7 @@ class TestRollback:
             exp.mkdir(parents=True)
             (exp / "model.pkl").write_bytes(payload)
             (exp / "metadata.json").write_text(json.dumps({"model_version": version}))
+            _sign(exp)
 
         production.mkdir(parents=True)
         (production / "model.pkl").write_bytes(b"new_model")
@@ -389,6 +406,7 @@ class TestRollbackSafety:
         (directory / "metadata.json").write_text(
             json.dumps({"model_version": directory.name, "feature_schema": schema})
         )
+        _sign(directory)
 
     def _lineage(self, isolated_paths, versions):
         isolated_paths["lineage_path"].parent.mkdir(parents=True, exist_ok=True)
