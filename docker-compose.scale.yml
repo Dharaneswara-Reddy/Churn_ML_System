@@ -1,0 +1,142 @@
+# Horizontal scale-out overlay.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.scale.yml \
+#       --profile scale up -d --build --scale api=3
+#
+# What this overlay changes, and why each change is required rather than optional:
+#
+# * **PostgreSQL replaces SQLite.** SQLite is one writer and one host. Two API
+#   replicas writing prediction events to the same file is not "slower", it is
+#   `database is locked` under any concurrency, and across hosts it is two
+#   different databases. Everything else here depends on this one change.
+#
+# * **The model bundle becomes a shared read-only volume.** Every replica must
+#   serve the same champion. With per-replica copies, a promotion reaches replicas
+#   at different times and identical requests get different answers depending on
+#   which replica the load balancer picked.
+#
+# * **A load balancer appears.** Compose's DNS round-robin has no health checking,
+#   so it keeps sending traffic to a replica whose /ready is failing.
+#
+# * **The scheduler stays at one replica.** It is not stateless: it retrains,
+#   rewrites the shared drift baseline and promotes. Leader election makes a second
+#   one *safe*, not useful — the loser exits immediately. Scale the worker instead;
+#   outbox claiming is designed for N consumers.
+#
+# The API replicas themselves are stateless: the only per-process state is the
+# lazily loaded model bundle, which is read-only and identical everywhere.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    profiles: [scale]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-churn}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+      POSTGRES_DB: ${POSTGRES_DB:-churn_events}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # Not published to the host: only the compose network needs it, and exposing
+    # 5432 is the single most scanned port on the internet.
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-churn} -d ${POSTGRES_DB:-churn_events}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    command:
+      # max_connections must cover: (api replicas x pool_size+max_overflow) +
+      # workers + scheduler + migrations, with headroom. The defaults in
+      # events/db.py are pool_size=10, max_overflow=5, so budget 15 per replica.
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+  api:
+    environment:
+      CHURN_EVENT_STORE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-churn}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-churn_events}
+      # Behind the nginx service, so trust its address for X-Forwarded-For. Never
+      # "*": that would let any caller forge the header and escape rate limiting.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-0.0.0.0/0}
+    # The host port is published by nginx instead — a fixed host port is
+    # incompatible with --scale, since replica 2 would collide with replica 1.
+    ports: !reset []
+    expose:
+      - "8000"
+    volumes:
+      - ./models:/app/models:ro
+      - app-logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    profiles: [scale]
+    ports:
+      - "${API_PORT:-8000}:8080"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    cap_drop: [ALL]
+    # nginx needs these two to bind and to drop privileges after start; ALL is
+    # dropped first so nothing else remains.
+    cap_add: [CHOWN, SETGID, SETUID, NET_BIND_SERVICE, DAC_OVERRIDE]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+
+  worker:
+    environment:
+      CHURN_EVENT_STORE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-churn}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-churn_events}
+    volumes:
+      - app-logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  scheduler:
+    environment:
+      CHURN_EVENT_STORE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-churn}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-churn_events}
+    volumes:
+      - app-logs:/app/logs
+    # Exactly one. A second instance is *safe* (the advisory lock makes it stand
+    # by and exit) but pointless.
+    deploy:
+      replicas: 1
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrate:
+    environment:
+      CHURN_EVENT_STORE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-churn}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-churn_events}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  # A named volume rather than a bind mount: N replicas appending to one host
+  # directory interleave their rotations and corrupt each other's log files.
+  app-logs:
