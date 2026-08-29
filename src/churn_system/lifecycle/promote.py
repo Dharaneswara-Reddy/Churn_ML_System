@@ -20,7 +20,27 @@ def schemas_match(prod_meta: dict[str, Any], new_meta: dict[str, Any]) -> bool:
     return prod_schema == new_schema
 
 
-def promote_model(version: str) -> bool:
+def schema_difference(
+    prod_meta: dict[str, Any], new_meta: dict[str, Any]
+) -> dict[str, list[str]]:
+    """Describe a schema change in the terms an operator has to reason about."""
+    prod_schema = list(prod_meta.get("feature_schema", []))
+    new_schema = list(new_meta.get("feature_schema", []))
+
+    removed = [c for c in prod_schema if c not in new_schema]
+    added = [c for c in new_schema if c not in prod_schema]
+    # Same members, different order. Serving reindexes columns into training
+    # order, so a pure reorder is still a real change worth naming.
+    reordered = (
+        []
+        if (removed or added)
+        else [a for a, b in zip(prod_schema, new_schema, strict=False) if a != b]
+    )
+
+    return {"removed": removed, "added": added, "reordered": reordered}
+
+
+def promote_model(version: str, *, allow_schema_change: bool = False) -> bool:
     """
     Promote a trained model version to production.
 
@@ -30,6 +50,26 @@ def promote_model(version: str) -> bool:
     Returns True when the model was promoted, False when promotion was refused.
     Callers must check the result — a refused promotion leaves the previous model
     serving, which is safe but means the challenger did not go live.
+
+    Deliberate schema changes
+    -------------------------
+    The schema gate exists because the API request model is generated from the
+    champion's ``feature_schema``: promoting a model with different features
+    silently rewrites the public API contract. Blocking that by default is right,
+    because the common cause is an *accident* — a feature-engineering edit that
+    nobody intended to ship as an API change.
+
+    But some schema changes are the entire point of the retrain (removing the
+    geographic features, for instance). ``allow_schema_change=True`` is the
+    explicit, logged opt-in for those. It is deliberately keyword-only and
+    deliberately never passed by the automated lifecycle in
+    ``lifecycle/orchestrator.py``: a scheduler must not be able to change the API
+    contract on its own, because there is no human in that loop to notice.
+
+    Callers that pass it are responsible for the client-facing side of the change.
+    ``api/schema_generator`` keeps removed fields accepted-and-ignored, so removals
+    do not break existing clients; *additions* are genuinely breaking, since the
+    new field becomes required.
     """
 
     experiments_dir = Path(CONFIG["paths"]["experiments_dir"])
@@ -57,16 +97,41 @@ def promote_model(version: str) -> bool:
         parent_model = prod_metadata.get("model_version")
 
         if not schemas_match(prod_metadata, new_metadata):
-            logger.error(
-                "Feature schema mismatch — promotion of %s blocked. "
-                "Production has %d features, challenger has %d.",
-                version,
-                len(prod_metadata.get("feature_schema", [])),
-                len(new_metadata.get("feature_schema", [])),
-            )
-            return False
+            difference = schema_difference(prod_metadata, new_metadata)
 
-    swap_model_bundle(source, target)
+            if not allow_schema_change:
+                logger.error(
+                    "Feature schema mismatch — promotion of %s blocked. "
+                    "Production has %d features, challenger has %d "
+                    "(removed=%s, added=%s). Re-run with allow_schema_change=True "
+                    "if this API contract change is intended.",
+                    version,
+                    len(prod_metadata.get("feature_schema", [])),
+                    len(new_metadata.get("feature_schema", [])),
+                    difference["removed"],
+                    difference["added"],
+                )
+                return False
+
+            # Loud on purpose: this line is the audit record that a human chose to
+            # change the API contract, and which fields moved.
+            logger.warning(
+                "Promoting %s with an APPROVED feature-schema change. "
+                "removed=%s added=%s. Removed fields remain accepted-and-ignored by "
+                "the request schema; added fields become REQUIRED and will break "
+                "clients that do not send them.",
+                version,
+                difference["removed"],
+                difference["added"],
+            )
+            if difference["added"]:
+                logger.warning(
+                    "This promotion ADDS required request fields (%s) — existing "
+                    "clients will receive 422 until they are updated.",
+                    difference["added"],
+                )
+
+    swap_model_bundle(source, target, sign=True)
 
     logger.info("Model %s promoted to production.", version)
 
