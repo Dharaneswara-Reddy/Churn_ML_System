@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.model_selection import train_test_split
 
+from churn_system.artifacts import sign_model_bundle
 from churn_system.config.config import CONFIG
 from churn_system.features.build_features import GEOGRAPHIC_COLUMNS, LEAKAGE_COLUMNS
 from churn_system.logging.logger import get_logger
@@ -344,6 +345,20 @@ def main() -> str:
         json.dump(metadata, f, indent=2)
 
     logger.info("Metadata saved.")
+
+    # ----------------------------
+    # Sign the bundle at creation
+    # ----------------------------
+    # Signing here, rather than only at promotion, closes a gap in the chain of
+    # custody. Promotion used to sign whatever bundle it found in
+    # models/experiments/ without verifying it first — so anyone able to write to
+    # that directory could tamper with a model.pkl and have promotion bless it,
+    # after which the API would verify the signature happily and unpickle it.
+    #
+    # The signature is computed over model.pkl and metadata.json together, so it
+    # is written last: both files must already be final.
+    signature_path = sign_model_bundle(model_dir)
+    logger.info("Bundle signed at %s", signature_path)
 
     # ----------------------------
     # MLflow tracking + registry

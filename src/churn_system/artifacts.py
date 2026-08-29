@@ -308,7 +308,9 @@ def _bundle_swap_lock(target: Path):
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
-def swap_model_bundle(source: Path, target: Path, *, sign: bool = False) -> None:
+def swap_model_bundle(
+    source: Path, target: Path, *, sign: bool = False, verify_source: bool = True
+) -> None:
     """
     Replace the bundle at ``target`` with a copy of ``source``, atomically.
 
@@ -327,12 +329,28 @@ def swap_model_bundle(source: Path, target: Path, *, sign: bool = False) -> None
     released — so no other swap can observe a partially-signed bundle, and a bundle
     that fails to sign (no signing key, and the unsigned opt-out is not set) never
     goes live: the previous bundle is restored and the failure is raised.
+
+    ``verify_source`` closes the other half of the chain of custody. Signing the
+    *destination* alone was not enough: promotion would bless whatever it found in
+    ``models/experiments/``, so anyone able to write there could tamper with a
+    ``model.pkl`` and have promotion sign it — after which the API would verify the
+    signature happily and unpickle the tampered artifact. Training now signs each
+    bundle as it writes it, and promotion re-verifies that signature before copying.
+
+    Set ``verify_source=False`` only for a bundle this process just produced and has
+    not yet signed.
     """
     source = Path(source)
     target = Path(target)
 
     if not source.is_dir():
         raise FileNotFoundError(f"Model bundle source not found: {source}")
+
+    if verify_source:
+        # Raises ArtifactSignatureError on a missing or mismatched signature. The
+        # unsigned opt-out is honoured inside verify_bundle_signature, so a local
+        # experiment with CHURN_ALLOW_UNSIGNED_MODEL=1 still promotes.
+        verify_bundle_signature(source)
 
     target.parent.mkdir(parents=True, exist_ok=True)
 
