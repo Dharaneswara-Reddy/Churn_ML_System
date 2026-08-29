@@ -14,7 +14,7 @@
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
 [![Docker](https://img.shields.io/badge/Docker-24.0%2B-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![Ruff](https://img.shields.io/badge/Code%20Style-Ruff-261230?style=for-the-badge&logo=ruff&logoColor=white)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/Tests-307%20Passed-2ea44f?style=for-the-badge&logo=pytest&logoColor=white)](https://docs.pytest.org/)
+[![Tests](https://img.shields.io/badge/Tests-313%20Passed-2ea44f?style=for-the-badge&logo=pytest&logoColor=white)](https://docs.pytest.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 
 [Architecture](#-architecture) • [Quick Start](#-quick-start) • [API Reference](#-api-reference) • [MLOps Lifecycle](#-mlops-lifecycle--drift-detection) • [Observability](#-observability--monitoring) • [Testing](#-testing--quality-assurance)
@@ -415,7 +415,7 @@ via environment variables:
 The codebase maintains strict code quality standards, validated with comprehensive unit, integration, and concurrency tests.
 
 ```bash
-# Execute full pytest suite (282 tests; 307 with a live PostgreSQL server)
+# Execute full pytest suite (288 tests; 313 with a live PostgreSQL server)
 .venv/bin/python -m pytest tests/ -v
 
 # With the coverage gate CI enforces

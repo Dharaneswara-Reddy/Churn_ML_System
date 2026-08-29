@@ -41,9 +41,35 @@ from sqlalchemy.orm import sessionmaker
 
 POSTGRES_URL = os.environ.get("CHURN_TEST_POSTGRES_URL")
 
+
+def _server_reachable(url: str | None) -> bool:
+    """
+    Whether a server is actually listening, not merely whether a URL was set.
+
+    Checking only the variable made a stale export — a container stopped since it
+    was set — produce 20 connection errors instead of 20 skips, which reads like a
+    code regression rather than a missing service. CI guards the opposite
+    direction: its PostgreSQL job fails if these tests skip, so a genuinely
+    unreachable server there is still a hard failure.
+    """
+    if not url:
+        return False
+    try:
+        engine = create_engine(url, future=True, connect_args={"connect_timeout": 3})
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        engine.dispose()
+    except Exception:
+        return False
+    return True
+
+
 pytestmark = pytest.mark.skipif(
-    not POSTGRES_URL,
-    reason="Set CHURN_TEST_POSTGRES_URL to a disposable PostgreSQL database to run these.",
+    not _server_reachable(POSTGRES_URL),
+    reason=(
+        "Set CHURN_TEST_POSTGRES_URL to a reachable, disposable PostgreSQL "
+        "database to run these."
+    ),
 )
 
 # Modules that did `from churn_system.events.db import SessionLocal` — the name is
