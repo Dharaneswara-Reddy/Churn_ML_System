@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from churn_system.artifacts import swap_model_bundle
+from churn_system.artifacts import load_metadata, swap_model_bundle
 from churn_system.config.config import CONFIG
 from churn_system.logging.logger import get_logger
 
@@ -39,6 +39,28 @@ def _previous_version(lineage: list[dict[str, Any]]) -> str | None:
         if version and version != current:
             return version
     return None
+
+
+def _schema_compatible(source: Path, production_dir: Path) -> bool:
+    """Return True when the rollback target's feature schema matches production."""
+    current_metadata = production_dir / "metadata.json"
+    candidate_metadata = source / "metadata.json"
+
+    if not candidate_metadata.exists():
+        logger.error("Rollback target has no metadata.json: %s", candidate_metadata)
+        return False
+    if not current_metadata.exists():
+        # Nothing in production to be incompatible with.
+        return True
+
+    try:
+        current = load_metadata(current_metadata).get("feature_schema", [])
+        candidate = load_metadata(candidate_metadata).get("feature_schema", [])
+    except (ValueError, OSError):
+        logger.exception("Could not read metadata while checking rollback compatibility")
+        return False
+
+    return current == candidate
 
 
 def rollback_if_needed() -> bool:
@@ -88,7 +110,20 @@ def rollback_if_needed() -> bool:
         logger.error("Previous model folder missing: %s", source)
         return False
 
-    swap_model_bundle(source, production_dir)
+    # Same interlock promotion applies. A rollback target with a different
+    # feature schema would break every request: the running API froze its
+    # request model and its column ordering from the schema currently in
+    # production. Serving a known-bad model is recoverable; serving one the API
+    # cannot even parse is not.
+    if not _schema_compatible(source, production_dir):
+        logger.error(
+            "Rollback to %s blocked: its feature schema differs from the model "
+            "currently in production. Manual intervention required.",
+            previous_model,
+        )
+        return False
+
+    swap_model_bundle(source, production_dir, sign=True)
 
     logger.warning("Rollback completed -> restored %s", previous_model)
     return True
