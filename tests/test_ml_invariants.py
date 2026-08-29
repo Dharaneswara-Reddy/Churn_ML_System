@@ -20,15 +20,11 @@ from churn_system.features.build_features import (
     build_features,
 )
 
-RAW_DATA = "data/Telco_customer_churn_raw.csv"
-
 
 @pytest.fixture(scope="module")
-def raw_frame():
-    frame = pd.read_csv(RAW_DATA)
-    if frame.empty:
-        pytest.skip("raw dataset unavailable")
-    return frame
+def raw_frame(raw_dataset):
+    """A frame with the full raw column contract (see the ``raw_dataset`` fixture)."""
+    return pd.read_csv(raw_dataset)
 
 
 class TestGeographyExcluded:

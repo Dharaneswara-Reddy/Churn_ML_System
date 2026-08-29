@@ -123,12 +123,12 @@ class TestRetrainingDatasetNeverBreaksTraining:
     """
 
     def test_written_dataset_always_passes_training_validation(
-        self, isolated_paths, contract, monkeypatch
+        self, isolated_paths, contract, monkeypatch, raw_dataset
     ):
         from churn_system.training.steps.data_validation import run_data_validation
 
         # A realistic base dataset: the full raw column contract.
-        raw = pd.read_csv("data/Telco_customer_churn_raw.csv").head(200)
+        raw = pd.read_csv(raw_dataset).head(200)
         raw.to_csv(isolated_paths["raw_data"], index=False)
 
         # A labelled prediction carries only redacted features — never the geo
@@ -152,9 +152,9 @@ class TestRetrainingDatasetNeverBreaksTraining:
         run_data_validation(written.copy())
 
     def test_unusable_labelled_rows_fall_back_to_base_dataset(
-        self, isolated_paths, contract
+        self, isolated_paths, contract, raw_dataset
     ):
-        raw = pd.read_csv("data/Telco_customer_churn_raw.csv").head(200)
+        raw = pd.read_csv(raw_dataset).head(200)
         raw.to_csv(isolated_paths["raw_data"], index=False)
 
         store_prediction_event(

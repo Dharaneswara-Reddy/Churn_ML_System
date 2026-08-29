@@ -112,6 +112,43 @@ def isolated_paths(tmp_path, monkeypatch):
     return layout
 
 
+@pytest.fixture(scope="session")
+def raw_dataset() -> Path:
+    """
+    A CSV satisfying the full raw column contract.
+
+    Uses the real dataset when it is present, and otherwise generates the
+    synthetic equivalent with ``scripts/generate_smoke_csv.py``, whose columns come
+    from ``schema.REQUIRED_COLUMNS``.
+
+    Skipping instead would be worse than it looks: ``data/`` is gitignored, so every
+    test that needs a raw frame would skip in CI — including the ones that pin the
+    geography exclusion and the retraining-set contract, which are precisely the
+    invariants that must not decay silently.
+    """
+    import subprocess
+    import sys
+
+    real = Path("data/Telco_customer_churn_raw.csv")
+    if real.exists() and real.stat().st_size > 0:
+        return real
+
+    synthetic = _TEST_STATE_DIR / "synthetic_raw.csv"
+    if not synthetic.exists():
+        subprocess.run(
+            [
+                sys.executable,
+                "scripts/generate_smoke_csv.py",
+                str(synthetic),
+                "--rows",
+                "400",
+            ],
+            check=True,
+            capture_output=True,
+        )
+    return synthetic
+
+
 @pytest.fixture
 def propagating_logger():
     """
