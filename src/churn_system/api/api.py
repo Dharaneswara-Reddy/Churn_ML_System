@@ -459,14 +459,16 @@ MAX_BATCH_SIZE = int(os.environ.get("CHURN_MAX_BATCH_SIZE", "100"))
 # threads add no parallelism while multiplying the fixed per-call cost
 # (DataFrame construction, schema validation, reindexing) by the number of chunks.
 #
-# Measured on a 100-row batch, one uvicorn worker, 25 reps, trimmed:
+# Measured on a 100-row batch, one uvicorn worker, 25 reps with outliers
+# trimmed, across two independent runs:
 #
-#     chunk= 10 -> 279.0 ms   358 rows/s
-#     chunk= 25 -> 129.1 ms   775 rows/s   <- the previous default
-#     chunk= 50 ->  77.0 ms  1299 rows/s
-#     chunk=100 ->  54.2 ms  1847 rows/s   <- one chunk, the new default
+#     chunk= 10 -> 266-279 ms   358-376 rows/s
+#     chunk= 25 -> 128-129 ms   775-780 rows/s   <- the previous default
+#     chunk= 50 ->  77- 88 ms  1136-1299 rows/s
+#     chunk=100 ->  54- 55 ms  1819-1847 rows/s  <- one chunk, the new default
 #
-# Monotonic: every split costs throughput. The knob is kept because it bounds peak
+# Monotonic in both runs: every split costs throughput. Run-to-run variance is
+# around 10% and never reorders the rows. The knob is kept because it bounds peak
 # memory for a single inference call, which matters if MAX_BATCH_SIZE is raised
 # well beyond 100 — but it is a memory/fairness control, not a throughput one.
 BATCH_CHUNK_SIZE = int(os.environ.get("CHURN_BATCH_CHUNK_SIZE", str(MAX_BATCH_SIZE)))

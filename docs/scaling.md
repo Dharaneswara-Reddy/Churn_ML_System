@@ -80,14 +80,17 @@ biggest lever available.
 achieving parallelism "while one chunk is waiting on GIL release". Measured on a
 100-row batch, one worker, 25 reps with outliers trimmed:
 
+Two independent runs, reported as ranges because run-to-run variance is about 10%
+and never reorders the rows:
+
 | `CHURN_BATCH_CHUNK_SIZE` | p50 | Rows/s |
 |---:|---:|---:|
-| 10 | 266.0 ms | 376 |
-| 25 *(old default)* | 128.2 ms | 780 |
-| 50 | 88.0 ms | 1136 |
-| 100 *(new default — one chunk)* | **55.0 ms** | **1819** |
+| 10 | 266–279 ms | 358–376 |
+| 25 *(old default)* | 128–129 ms | 775–780 |
+| 50 | 77–88 ms | 1136–1299 |
+| 100 *(new default — one chunk)* | **54–55 ms** | **1819–1847** |
 
-Monotonic: every split costs throughput. The premise was wrong — `predict_proba`
+Monotonic in both runs: every split costs throughput. The premise was wrong — `predict_proba`
 holds the GIL for the entire call, so the chunks never overlap, while each chunk
 repays the full fixed cost of DataFrame construction, validation and reindexing.
 The default is now the whole batch. The knob remains as a **memory** bound for

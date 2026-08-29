@@ -238,6 +238,9 @@ jobs:
           image-ref: churn-api:ci
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+          # Accepted findings live in .trivyignore, each with a written reason and
+          # an expiry date so it cannot quietly become permanent.
+          trivyignores: .trivyignore
           exit-code: "1"
 
   security:
@@ -278,4 +281,5 @@ jobs:
           scanners: vuln,secret,misconfig
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+          trivyignores: .trivyignore
           exit-code: "1"

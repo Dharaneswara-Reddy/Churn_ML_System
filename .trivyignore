@@ -1,0 +1,20 @@
+# Vulnerabilities accepted, with the reason and a date to revisit.
+#
+# Nothing goes in here to make a build green. Each entry must name why the
+# finding cannot currently be fixed, and carry an expiry so it comes back.
+
+# cryptography 49.0.0 — HIGH, fixed upstream in 50.0.0.
+#
+# Not fixable from this repository today: mlflow requires `cryptography<50`, and
+# mlflow itself is pinned to >=3.15.0 because older releases carry 17 CVEs, seven
+# of them CRITICAL (arbitrary command execution, path traversal, credential
+# exfiltration, unauthenticated SSRF). Forcing cryptography>=50 makes the
+# dependency set unresolvable — pip refuses the install outright.
+#
+# Exposure here is limited: cryptography arrives transitively through mlflow's
+# tracking client, this project never calls it directly, and mlflow is disabled
+# in serving (CHURN_MLFLOW_ENABLED=0) and unreachable from the request path.
+#
+# Revisit when mlflow relaxes its upper bound. Remove this line then — do not
+# extend the expiry without re-checking.
+CVE-2026-69247 exp:2026-12-31
