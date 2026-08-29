@@ -36,6 +36,12 @@ os.environ.setdefault(
 os.environ.setdefault("CHURN_ALLOW_ANONYMOUS", "1")
 os.environ.setdefault("CHURN_DISABLE_RATE_LIMIT", "1")
 os.environ.setdefault("CHURN_MLFLOW_ENABLED", "0")
+# Model bundles are HMAC-signed and verification fails closed, so the suite needs a
+# key. A fixed test key is correct here: these tests must exercise the real
+# signing/verification path, not an opt-out that would let an unsigned bundle pass.
+os.environ.setdefault("CHURN_ARTIFACT_SIGNING_KEY", "test-artifact-signing-key")
+# Pseudonymisation also fails closed without a salt.
+os.environ.setdefault("CHURN_SUBJECT_KEY_SALT", "test-subject-key-salt")
 
 
 @pytest.fixture(autouse=True)
