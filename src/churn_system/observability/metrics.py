@@ -136,5 +136,70 @@ LABELS_RECORDED_TOTAL = Counter(
 )
 
 
+# ── 8. Lifecycle / Scheduler Metrics ─────────────────────────────────────────
+# The scheduler previously swallowed every exception into a log line, so a
+# permanently broken retrain loop looked identical to a healthy idle one.
+
+SCHEDULER_RUNS_TOTAL = Counter(
+    "churn_scheduler_runs_total",
+    "Lifecycle cycles attempted, by outcome",
+    ["outcome"],
+)
+
+SCHEDULER_FAILURES_TOTAL = Counter(
+    "churn_scheduler_failures_total",
+    "Lifecycle operations that raised, by operation",
+    ["operation"],
+)
+
+SCHEDULER_CONSECUTIVE_FAILURES = Gauge(
+    "churn_scheduler_consecutive_failures",
+    "Consecutive failed lifecycle cycles; non-zero means the loop is stuck",
+)
+
+SCHEDULER_LAST_SUCCESS_TIMESTAMP = Gauge(
+    "churn_scheduler_last_success_timestamp_seconds",
+    "Unix time of the last lifecycle cycle that completed without error",
+)
+
+SCHEDULER_IS_LEADER = Gauge(
+    "churn_scheduler_is_leader",
+    "1 when this process holds the scheduler lease, else 0",
+)
+
+TRAINING_LAST_SUCCESS_TIMESTAMP = Gauge(
+    "churn_training_last_success_timestamp_seconds",
+    "Unix time of the last successful training run",
+)
+
+PROMOTIONS_TOTAL = Counter(
+    "churn_promotions_total",
+    "Model promotion decisions, by result",
+    ["result"],
+)
+
+OUTBOX_BACKLOG = Gauge(
+    "churn_outbox_backlog",
+    "Outbox events by status",
+    ["status"],
+)
+
+CHAMPION_MODEL_INFO = Gauge(
+    "churn_champion_model_info",
+    "Always 1; the model_version label carries the current champion",
+    ["model_version"],
+)
+
+# Counts requests that still carry a field the current model no longer uses. The
+# compatibility shim in api/schema_generator.py accepts and ignores those fields,
+# which means a caller gets no signal that it is sending dead weight — this metric
+# is the only evidence available for deciding when the shim can be retired.
+DEPRECATED_REQUEST_FIELDS_TOTAL = Counter(
+    "churn_deprecated_request_fields_total",
+    "Requests received containing a deprecated (accepted-and-ignored) field",
+    ["field"],
+)
+
+
 def render_latest() -> tuple[bytes, str]:
     return generate_latest(), CONTENT_TYPE_LATEST
