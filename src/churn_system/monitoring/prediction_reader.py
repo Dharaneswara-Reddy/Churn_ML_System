@@ -37,15 +37,37 @@ def load_reference_and_production() -> tuple[pd.DataFrame, pd.DataFrame] | None:
     return reference_df, production_df
 
 
+DEFAULT_MONITORING_ROW_LIMIT = 50_000
+
+
+def _monitoring_limit() -> int:
+    return int(
+        CONFIG.get("monitoring", {}).get(
+            "max_production_rows", DEFAULT_MONITORING_ROW_LIMIT
+        )
+    )
+
+
 def load_predictions_df(limit: int | None = None) -> pd.DataFrame:
     """
-    Load prediction events into a DataFrame for monitoring jobs.
+    Load recent prediction events into a DataFrame for monitoring jobs.
+
+    Bounded by default. This is called by ``evaluate_model_health`` on every
+    lifecycle cycle, and it previously loaded the ENTIRE table: 200k rows measured
+    at 15.5s and 766MB peak, extrapolating to roughly 38GB at 10M rows. Drift
+    detection needs a recent sample, not the full history, so an unbounded read
+    was never buying accuracy — only an eventual OOM of the health check that is
+    supposed to keep the model fresh.
+
+    Pass ``limit=0`` to explicitly request every row (offline analysis only).
     """
     init_db()
+    effective_limit = _monitoring_limit() if limit is None else limit
+
     with SessionLocal() as session:
         stmt = select(PredictionEvent).order_by(PredictionEvent.created_at.desc())
-        if limit is not None:
-            stmt = stmt.limit(limit)
+        if effective_limit:
+            stmt = stmt.limit(effective_limit)
         rows = session.execute(stmt).scalars().all()
 
     # Oldest -> newest for time-series reporting
