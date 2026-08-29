@@ -15,6 +15,10 @@
 # tracking client, this project never calls it directly, and mlflow is disabled
 # in serving (CHURN_MLFLOW_ENABLED=0) and unreachable from the request path.
 #
-# Revisit when mlflow relaxes its upper bound. Remove this line then — do not
+# The same finding is suppressed for pip-audit in .github/workflows/ci.yml under
+# its identifier PYSEC-2026-3552. The two scanners use different IDs; keep them in
+# step.
+#
+# Revisit when mlflow relaxes its upper bound. Remove BOTH entries then — do not
 # extend the expiry without re-checking.
 CVE-2026-69247 exp:2026-12-31
