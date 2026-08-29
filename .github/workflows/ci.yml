@@ -99,6 +99,67 @@ jobs:
           alembic downgrade base
           alembic upgrade head
 
+  postgres:
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The claims this job checks — concurrent outbox claiming under real MVCC,
+    # advisory-lock leader election, JSONB column types, and zero autogenerate
+    # drift between the migrations and the ORM — are not observable on SQLite.
+    # Without this job those tests skip everywhere and the guarantee silently
+    # decays back to "compiles against the dialect".
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: churn
+          POSTGRES_PASSWORD: churn
+          POSTGRES_DB: churn_events
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U churn -d churn_events"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev,postgres]"
+
+      - name: Migrate a live PostgreSQL database, both directions
+        env:
+          CHURN_EVENT_STORE_DATABASE_URL: postgresql+psycopg://churn:churn@localhost:5432/churn_events
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: Integration tests against the live server
+        env:
+          CHURN_TEST_POSTGRES_URL: postgresql+psycopg://churn:churn@localhost:5432/churn_events
+        run: pytest tests/test_postgres_integration.py -v
+
+      - name: Fail if the suite skipped instead of running
+        env:
+          CHURN_TEST_POSTGRES_URL: postgresql+psycopg://churn:churn@localhost:5432/churn_events
+        # A misconfigured URL would make every test skip and the job pass green,
+        # which is the exact failure this job exists to prevent.
+        run: |
+          pytest tests/test_postgres_integration.py -q --no-header -o addopts="" \
+            | tee /tmp/pg_result.txt
+          grep -qE "[0-9]+ passed" /tmp/pg_result.txt
+          if grep -qE "[0-9]+ skipped" /tmp/pg_result.txt; then
+            echo "PostgreSQL integration tests skipped — the server was not reachable."
+            exit 1
+          fi
+
   smoke-train:
     name: Smoke training
     runs-on: ubuntu-latest
@@ -120,6 +181,12 @@ jobs:
           CHURN_EXPERIMENTS_DIR: /tmp/churn_experiments_ci
           CHURN_TRAINING_REFERENCE_PATH: /tmp/churn_training_ref_ci.csv
           CHURN_PRODUCTION_MODEL_PATH: /tmp/churn_production_ci/current/model.pkl
+          # Bundle verification fails closed, so loading the artifact back needs a
+          # key. A fixed throwaway value is correct here: the point is to exercise
+          # the real sign-then-verify path, not CHURN_ALLOW_UNSIGNED_MODEL, which
+          # would let an unsigned bundle through and prove nothing.
+          CHURN_ARTIFACT_SIGNING_KEY: ci-smoke-training-key
+          CHURN_SUBJECT_KEY_SALT: ci-smoke-training-salt
         run: |
           python scripts/generate_smoke_csv.py "$CHURN_RAW_DATA_PATH" --rows 400
           python -m churn_system.training.train
@@ -166,7 +233,7 @@ jobs:
         run: docker build -f Dockerfile.training -t churn-train:ci .
 
       - name: Scan API image for vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: churn-api:ci
           severity: CRITICAL,HIGH
@@ -193,7 +260,7 @@ jobs:
           pip-audit --strict
 
       - name: Scan repository for vulnerabilities and secrets
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scanners: vuln,secret,misconfig
