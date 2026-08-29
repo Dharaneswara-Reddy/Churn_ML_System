@@ -19,7 +19,13 @@ from churn_system.events.db import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers defaults to True, which silences every logger that
+    # already exists in the process. That is harmless for `alembic upgrade` on the
+    # command line, where nothing else is running — but running a migration
+    # in-process (a test, or a startup hook that migrates before serving) would
+    # then silently disable the application's own loggers for the rest of that
+    # process's life. The failure mode is that logging simply stops, with no error.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
