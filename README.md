@@ -511,9 +511,10 @@ Stated plainly, because the difference matters when evaluating this repository.
   they are YAML-valid only. `ReadWriteMany` storage is assumed and not tested.
 - The nginx scale-out overlay is config-valid but has not been run under sustained load
 - **Customer geography remains in this repository's git history** inside model
-  artifacts committed before the geographic features were removed. Removing it
-  requires a history rewrite and a force-push; the current model no longer contains
-  or accepts those features, but the historical blobs are still reachable.
+  artifacts committed before the geographic features were removed. The current
+  model neither contains nor collects those features, but the historical blobs are
+  still reachable. Scope, impact and a verified remediation procedure are in
+  [SECURITY.md](SECURITY.md).
 
 ---
 
