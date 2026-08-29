@@ -16,9 +16,39 @@ training:
   min_class_count: 2
   selection_metric: "pr_auc"
 
+# How the serving decision threshold is chosen. 0.5 is Bayes-optimal only for
+# balanced classes with symmetric costs; churn is ~26.5% positive and a missed
+# churner costs far more than an unnecessary retention offer.
+threshold_selection:
+  # f1 | fbeta | fixed
+  objective: "fbeta"
+  # beta > 1 weights recall above precision
+  beta: 2.0
+  # Optional floor: only thresholds achieving at least this recall are considered
+  min_recall: 0.50
+  # When several thresholds score within this of the best, prefer the highest
+  # one — fewer customers flagged for the same objective value.
+  tie_tolerance: 0.005
+  # Used only when objective == "fixed"
+  fixed_value: 0.5
+
 model_promotion:
   metric: "pr_auc"
-  min_improvement: 0.0
+  # A challenger must beat the champion by more than the measurement noise.
+  # Bootstrap on this dataset put the PR-AUC 95% CI width near 0.165, so a
+  # 0.0 margin promoted on noise and would eventually ship a zero-recall model.
+  min_improvement: 0.02
+  # Absolute floors a challenger must clear regardless of relative improvement.
+  min_recall: 0.40
+  min_precision: 0.30
+  min_pr_auc: 0.45
+  # Reject a challenger whose bootstrap CI overlaps the champion's point estimate,
+  # i.e. the improvement is not statistically distinguishable from noise.
+  require_statistical_significance: true
+  # Metrics that may not regress by more than this, even if the gate metric improves.
+  no_regression:
+    recall: 0.05
+    precision: 0.05
 
 monitoring:
   # PSI above this counts as a drifted feature
@@ -29,6 +59,20 @@ monitoring:
   min_production_samples: 20
   # How many drifted features it takes to recommend retraining
   drift_feature_limit: 2
+  # Upper bound on prediction rows loaded for a drift evaluation. Drift needs a
+  # recent sample, not full history; unbounded reads OOM as the table grows.
+  max_production_rows: 50000
+
+# Event store retention. Nothing here may delete work that has not been done.
+retention:
+  # PROCESSED outbox events are disposable once delivered.
+  processed_outbox_days: 7
+  # DEAD_LETTER events are evidence of a failure — kept far longer.
+  dead_letter_days: 90
+  # Unlabelled predictions age out; labelled rows are training data and are kept.
+  prediction_days: 180
+  # Deletes are committed in batches of this size to avoid long write locks.
+  batch_size: 1000
 
 api:
   # slowapi format, e.g. "60/minute", "100/hour"
