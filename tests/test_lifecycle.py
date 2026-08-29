@@ -161,8 +161,19 @@ class TestPromoteModel:
 
         promote_model("churn_model_20260301_120000")
 
-        leftovers = [p.name for p in production_dir.iterdir() if p.name.startswith(".")]
+        # Staging artifacts must be cleaned up. The flock sentinel (.current.lock)
+        # is deliberately excluded: it is the lock file itself and must persist for
+        # mutual exclusion between concurrent promotions, so its presence is correct.
+        leftovers = [
+            entry.name
+            for entry in production_dir.iterdir()
+            if entry.is_dir() and ("incoming" in entry.name or "retired" in entry.name)
+        ]
         assert leftovers == [], f"staging directories left behind: {leftovers}"
+
+        # The sentinel must be a file, not a stray directory.
+        lock_files = [e for e in production_dir.iterdir() if e.name.endswith(".lock")]
+        assert all(e.is_file() for e in lock_files)
 
 
 class TestCompareModels:
@@ -170,16 +181,42 @@ class TestCompareModels:
 
     @pytest.fixture
     def champion_and_challenger(self, isolated_paths):
-        def build(champion_metrics, challenger_metrics):
+        """
+        Build a champion/challenger pair.
+
+        Metrics are padded with recall/precision that clear the absolute floors,
+        and an experiment report carrying a bootstrap interval, so these tests
+        exercise the metric-selection logic specifically rather than tripping an
+        unrelated gate. Tests that target a particular gate override these.
+        """
+
+        def build(champion_metrics, challenger_metrics, ci_lower=None):
+            champion = {"recall": 0.60, "precision": 0.45, **champion_metrics}
+            challenger = {"recall": 0.62, "precision": 0.46, **challenger_metrics}
+
             _write_bundle(
                 isolated_paths["production_model"].parent,
                 schema=["A", "B"],
-                metrics=champion_metrics,
+                metrics=champion,
             )
-            _write_bundle(
-                isolated_paths["experiments_dir"] / "churn_model_20260301_120000",
-                schema=["A", "B"],
-                metrics=challenger_metrics,
+            experiment = isolated_paths["experiments_dir"] / "churn_model_20260301_120000"
+            _write_bundle(experiment, schema=["A", "B"], metrics=challenger)
+
+            metric = "pr_auc"
+            if ci_lower is None:
+                # Comfortably above the champion, so significance is not the gate
+                # under test here.
+                ci_lower = float(champion.get(metric, 0.0)) + 0.05
+            (experiment / "experiment_report.json").write_text(
+                json.dumps(
+                    {
+                        "winner": "candidate",
+                        "selection_metric": metric,
+                        "confidence_intervals": {
+                            "candidate": {"lower": ci_lower, "upper": 1.0}
+                        },
+                    }
+                )
             )
 
         return build
@@ -196,6 +233,9 @@ class TestCompareModels:
         from churn_system.config import config as cfg
 
         monkeypatch.setitem(cfg.CONFIG["model_promotion"], "metric", "pr_auc")
+        # pr_auc floor lowered so this test isolates *which metric* is compared,
+        # not whether the absolute value clears the production floor.
+        monkeypatch.setitem(cfg.CONFIG["model_promotion"], "min_pr_auc", 0.0)
         champion_and_challenger(
             {"roc_auc": 0.8225, "pr_auc": 0.22},
             {"roc_auc": 0.8220, "pr_auc": 0.31},
@@ -212,6 +252,8 @@ class TestCompareModels:
         monkeypatch.setitem(cfg.CONFIG["model_promotion"], "metric", "pr_auc")
         monkeypatch.setitem(cfg.CONFIG["model_promotion"], "min_improvement", 0.01)
         champion_and_challenger({"pr_auc": 0.30}, {"pr_auc": 0.3000001})
+        # Only the improvement gate should decide this case.
+        monkeypatch.setitem(cfg.CONFIG["model_promotion"], "min_pr_auc", 0.0)
 
         assert compare_models() is False
 
@@ -336,3 +378,80 @@ class TestRollback:
 
         assert rollback_if_needed() is False
         assert (production / "model.pkl").read_bytes() == b"current_model"
+
+
+class TestRollbackSafety:
+    """Rollback is the recovery path — it must be at least as guarded as promotion."""
+
+    def _bundle(self, directory, schema, payload):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "model.pkl").write_bytes(payload)
+        (directory / "metadata.json").write_text(
+            json.dumps({"model_version": directory.name, "feature_schema": schema})
+        )
+
+    def _lineage(self, isolated_paths, versions):
+        isolated_paths["lineage_path"].parent.mkdir(parents=True, exist_ok=True)
+        isolated_paths["lineage_path"].write_text(
+            json.dumps([{"model_version": v} for v in versions])
+        )
+        (isolated_paths["monitoring_dir"] / "health_report.json").write_text(
+            json.dumps({"retraining_recommended": True})
+        )
+
+    def test_rollback_blocked_on_schema_mismatch(self, isolated_paths):
+        """
+        A rollback target with a different schema would break every request: the
+        running API froze its request model from the schema now in production.
+        """
+        experiments = isolated_paths["experiments_dir"]
+        production = isolated_paths["production_model"].parent
+
+        self._bundle(experiments / "churn_model_20260101_000000", ["A", "B"], b"old")
+        self._bundle(experiments / "churn_model_20260201_000000", ["A", "B", "C"], b"new")
+        self._bundle(production, ["A", "B", "C"], b"new")
+        self._lineage(
+            isolated_paths,
+            ["churn_model_20260101_000000", "churn_model_20260201_000000"],
+        )
+
+        assert rollback_if_needed() is False
+        assert (production / "model.pkl").read_bytes() == b"new"
+
+    def test_rollback_proceeds_when_schemas_match(self, isolated_paths):
+        experiments = isolated_paths["experiments_dir"]
+        production = isolated_paths["production_model"].parent
+
+        self._bundle(experiments / "churn_model_20260101_000000", ["A", "B"], b"old")
+        self._bundle(experiments / "churn_model_20260201_000000", ["A", "B"], b"new")
+        self._bundle(production, ["A", "B"], b"new")
+        self._lineage(
+            isolated_paths,
+            ["churn_model_20260101_000000", "churn_model_20260201_000000"],
+        )
+
+        assert rollback_if_needed() is True
+        assert (production / "model.pkl").read_bytes() == b"old"
+
+
+class TestRollbackNotifiesServing:
+    """A rollback that no replica hears about has not recovered anything."""
+
+    def test_orchestrator_reloads_serving_after_rollback(
+        self, isolated_paths, monkeypatch
+    ):
+        import churn_system.lifecycle.orchestrator as orch
+
+        calls = []
+        monkeypatch.setattr(orch, "notify_serving_reload", lambda: calls.append(1))
+        monkeypatch.setattr(orch, "evaluate_model_health", lambda: None)
+        monkeypatch.setattr(orch, "rollback_if_needed", lambda: True)
+
+        (isolated_paths["monitoring_dir"] / "health_report.json").write_text(
+            json.dumps({"retraining_recommended": False})
+        )
+
+        outcome = orch.run_lifecycle()
+
+        assert outcome["rolled_back"] is True
+        assert calls == [1], "serving was not notified after rollback"

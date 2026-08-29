@@ -18,32 +18,54 @@ from fastapi.testclient import TestClient
 # model bundle on disk (CI environments don't have models/production/).
 # ---------------------------------------------------------------------------
 _FAKE_METADATA = {
+    # Mirrors the real production schema: 19 features, geography deliberately
+    # excluded. Geographic columns are dropped in build_features, so a fixture
+    # that still declares them would make validate_inference_data report them
+    # as missing on every request.
     "feature_schema": [
-        "Country", "State", "City", "Zip Code", "Lat Long",
-        "Latitude", "Longitude", "Gender", "Senior Citizen",
-        "Partner", "Dependents", "Tenure Months", "Phone Service",
-        "Multiple Lines", "Internet Service", "Online Security",
-        "Online Backup", "Device Protection", "Tech Support",
-        "Streaming TV", "Streaming Movies", "Contract",
-        "Paperless Billing", "Payment Method", "Monthly Charges",
-        "Total Charges",
+        "Gender",
+        "Senior Citizen",
+        "Partner",
+        "Dependents",
+        "Tenure Months",
+        "Phone Service",
+        "Multiple Lines",
+        "Internet Service",
+        "Online Security",
+        "Online Backup",
+        "Device Protection",
+        "Tech Support",
+        "Streaming TV",
+        "Streaming Movies",
+        "Contract",
+        "Paperless Billing",
+        "Payment Method",
+        "Monthly Charges",
+        "Total Charges"
     ],
-    "feature_count": 26,
+    "feature_count": 19,
     "metrics": {},
+    "operating_threshold": 0.5,
     "feature_types": {
-        "Country": "str", "State": "str", "City": "str",
-        "Zip Code": "str", "Lat Long": "str",
-        "Latitude": "float", "Longitude": "float",
-        "Gender": "str", "Senior Citizen": "str",
-        "Partner": "str", "Dependents": "str",
-        "Tenure Months": "int", "Phone Service": "str",
-        "Multiple Lines": "str", "Internet Service": "str",
-        "Online Security": "str", "Online Backup": "str",
-        "Device Protection": "str", "Tech Support": "str",
-        "Streaming TV": "str", "Streaming Movies": "str",
-        "Contract": "str", "Paperless Billing": "str",
-        "Payment Method": "str", "Monthly Charges": "float",
-        "Total Charges": "float",
+        "Gender": "str",
+        "Senior Citizen": "str",
+        "Partner": "str",
+        "Dependents": "str",
+        "Tenure Months": "int",
+        "Phone Service": "str",
+        "Multiple Lines": "str",
+        "Internet Service": "str",
+        "Online Security": "str",
+        "Online Backup": "str",
+        "Device Protection": "str",
+        "Tech Support": "str",
+        "Streaming TV": "str",
+        "Streaming Movies": "str",
+        "Contract": "str",
+        "Paperless Billing": "str",
+        "Payment Method": "str",
+        "Monthly Charges": "float",
+        "Total Charges": "float"
     },
 }
 
@@ -77,13 +99,6 @@ def api_module(monkeypatch):
 
 def _sample_payload():
     return {
-        "Country": "US",
-        "State": "CA",
-        "City": "TestCity",
-        "Zip Code": "90210",
-        "Lat Long": "34.0, -118.0",
-        "Latitude": 34.0,
-        "Longitude": -118.0,
         "Gender": "Male",
         "Senior Citizen": "No",
         "Partner": "Yes",

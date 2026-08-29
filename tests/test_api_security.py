@@ -231,3 +231,59 @@ class TestErrorEnvelope:
 
         assert response.status_code == 422
         assert "sensitive-value" not in response.text
+
+
+class TestReadinessProbe:
+    """
+    /ready must actually pass against a real model bundle.
+
+    It previously filled every field — including 18 string columns — with the
+    integer 0, which made sklearn call np.isnan() on a mixed-type array and raise.
+    The probe therefore returned 503 on every call regardless of model health, and
+    the container healthcheck depends on it.
+    """
+
+    def test_probe_row_preserves_declared_types(self, secured_api, monkeypatch):
+        monkeypatch.setattr(
+            "churn_system.api.schema_generator.load_feature_types",
+            lambda: {"Tenure Months": "int", "Zip Code": "str"},
+        )
+        monkeypatch.setattr(
+            "churn_system.api.api.load_feature_types",
+            lambda: {"Tenure Months": "int", "Zip Code": "str"},
+        )
+        monkeypatch.setattr(
+            "churn_system.api.api.load_feature_schema",
+            lambda: ["Tenure Months", "Zip Code"],
+        )
+
+        row = secured_api._probe_row()
+
+        # A categorical column must never be handed to the encoder as a number.
+        assert isinstance(row["Zip Code"], str)
+
+
+class TestChunkedBodyLimit:
+    """A body-size cap that only reads Content-Length is trivially bypassed."""
+
+    def test_chunked_request_without_content_length_is_rejected(self, secured_api):
+        client = TestClient(secured_api.app)
+
+        def chunked_body():
+            yield b'{"Tenure Months": 1, "Monthly Charges": 1.0, "Total Charges": 1.0}'
+
+        response = client.post(
+            "/predict",
+            content=chunked_body(),
+            headers={"X-API-Key": "prediction-key", "Content-Type": "application/json"},
+        )
+
+        assert response.status_code == 411
+        assert response.json()["error_code"] == "length_required"
+
+    def test_normal_request_with_content_length_still_works(self, secured_api):
+        client = TestClient(secured_api.app)
+        response = client.post(
+            "/predict", json=PAYLOAD, headers={"X-API-Key": "prediction-key"}
+        )
+        assert response.status_code == 200
