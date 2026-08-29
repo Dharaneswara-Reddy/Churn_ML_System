@@ -52,6 +52,11 @@ def run_lifecycle() -> dict[str, bool]:
         # Still consider rollback: the running model may be unhealthy for reasons
         # unrelated to this cycle's drift verdict.
         outcome["rolled_back"] = rollback_if_needed()
+        if outcome["rolled_back"]:
+            # Rollback rewrites bytes on disk exactly like promotion does, so the
+            # serving layer needs the same notification — otherwise the recovery
+            # path silently leaves every replica on the model it rolled back from.
+            notify_serving_reload()
         logger.info("--- Lifecycle evaluation completed ---")
         return outcome
 
@@ -88,6 +93,8 @@ def run_lifecycle() -> dict[str, bool]:
         logger.info("Skipping rollback check — a new model was promoted this cycle.")
     else:
         outcome["rolled_back"] = rollback_if_needed()
+        if outcome["rolled_back"]:
+            notify_serving_reload()
 
     logger.info("--- Lifecycle evaluation completed ---")
     return outcome

@@ -54,6 +54,22 @@ def labelled_production_frame() -> pd.DataFrame:
     return pd.DataFrame.from_records(records)
 
 
+def _passes_training_contract(frame: pd.DataFrame) -> bool:
+    """
+    Check a candidate retraining frame against the training validation contract.
+
+    Uses the exact function the training pipeline runs, on a copy, so this can
+    never disagree with the gate it is protecting.
+    """
+    from churn_system.training.steps.data_validation import run_data_validation
+
+    try:
+        run_data_validation(frame.copy())
+    except Exception:
+        return False
+    return True
+
+
 def build_retraining_dataset() -> Path:
     """
     Write the retraining dataset and return its path.
@@ -85,13 +101,31 @@ def build_retraining_dataset() -> Path:
         aligned = aligned[base_df.columns]
 
         combined = pd.concat([base_df, aligned], ignore_index=True)
-        logger.info(
-            "Added %d labelled production samples (%d columns carried over, "
-            "%d filled as missing).",
-            len(aligned),
-            len(usable),
-            len(missing),
-        )
+
+        # Validate against the *same* contract training will apply, before this
+        # file is written. Ingestion prefers the retraining dataset whenever it
+        # exists, so writing a frame that fails validation does not merely skip
+        # one cycle — it permanently breaks every subsequent training run, and
+        # the scheduler swallows the exception so the failure is silent.
+        if not _passes_training_contract(combined):
+            logger.error(
+                "Merged retraining dataset failed the training contract; falling "
+                "back to the base dataset. Labelled production rows are missing "
+                "%d column(s) that validation requires (%s). These are stripped by "
+                "PII redaction and cannot be recovered — drop them from the feature "
+                "set, or relax their nullability, to make labelled rows usable.",
+                len(missing),
+                ", ".join(missing[:8]) + ("..." if len(missing) > 8 else ""),
+            )
+            combined = base_df
+        else:
+            logger.info(
+                "Added %d labelled production samples (%d columns carried over, "
+                "%d filled as missing).",
+                len(aligned),
+                len(usable),
+                len(missing),
+            )
 
     output = _output_path()
     output.parent.mkdir(parents=True, exist_ok=True)
