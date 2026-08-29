@@ -26,6 +26,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -37,13 +38,19 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from churn_system.api.errors import ErrorBody
-from churn_system.api.schema_generator import generate_request_model, load_feature_schema
+from churn_system.api.schema_generator import (
+    generate_request_model,
+    load_feature_schema,
+    load_feature_types,
+)
 from churn_system.config.config import CONFIG, load_config
 from churn_system.events.db import init_db
 from churn_system.events.predictions import record_label, store_prediction_event
 from churn_system.features.build_features import build_features
+from churn_system.inference.model_contract import load_model_contract
 from churn_system.logging.logger import get_logger
 from churn_system.observability.metrics import (
+    DEPRECATED_REQUEST_FIELDS_TOTAL,
     EVENT_WRITE_DROPPED_TOTAL,
     EVENT_WRITE_FAILURES_TOTAL,
     EXPLANATION_LATENCY_SECONDS,
@@ -54,6 +61,7 @@ from churn_system.observability.metrics import (
     REQUESTS_TOTAL,
     render_latest,
 )
+from churn_system.observability.state_metrics import refresh_state_metrics
 from churn_system.schema import validate_inference_data
 from churn_system.serving.model_registry import ModelRegistry
 
@@ -205,10 +213,29 @@ async def shutdown_middleware(request: Request, call_next):
 MAX_BODY_BYTES = int(os.environ.get("CHURN_MAX_BODY_BYTES", str(8 * 1024 * 1024)))
 
 
+BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
+
+
 @app.middleware("http")
 async def body_size_middleware(request: Request, call_next):
     """Reject oversized payloads before the body is read into memory."""
     content_length = request.headers.get("content-length")
+
+    # A chunked request declares no Content-Length, so a size check that trusts
+    # that header alone is trivially bypassed — a 42MB body was accepted and
+    # fully materialised in memory despite an 8MB cap. Requiring a declared
+    # length on body-bearing methods closes that hole; this API only ever
+    # receives JSON of known size.
+    if content_length is None and request.method in BODY_METHODS:
+        return JSONResponse(
+            status_code=411,
+            content=ErrorBody(
+                error_code="length_required",
+                message="Content-Length header is required",
+                detail="Chunked transfer encoding is not accepted on this endpoint",
+            ).model_dump(),
+        )
+
     if content_length:
         try:
             declared = int(content_length)
@@ -350,12 +377,99 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     return JSONResponse(status_code=exc.status_code, content=content, headers=exc.headers)
 
 
-RequestModel = generate_request_model()
+def _build_request_model():
+    """
+    Build the dynamic request model, degrading rather than killing the process.
+
+    The request schema is derived from the production bundle's metadata, so a
+    missing or unreadable bundle used to raise here — at module import, before
+    ``lifespan`` ran and before any route was bound. The process therefore died
+    with a bare traceback instead of serving the structured 503 that ``/ready``
+    exists to return: under an orchestrator that is CrashLoopBackOff with no
+    readiness signal and no way to tell a missing model from a crashed app.
+
+    Falling back to a permissive model keeps the process bootable and observable.
+    Serving is NOT silently degraded: ``validate_inference_data`` still enforces
+    the real schema on every request, and ``/ready`` reports 503 until a valid
+    bundle is present, so an instance in this state never passes a readiness gate.
+    """
+    try:
+        return generate_request_model()
+    except Exception:
+        logger.exception(
+            "Could not build the request schema from the production bundle. The API "
+            "will start so /health and /ready are reachable, but /ready will report "
+            "503 and predictions will fail until a valid bundle is promoted."
+        )
+
+        class UnconfiguredPredictionRequest(BaseModel):
+            model_config = ConfigDict(extra="allow")
+
+        return UnconfiguredPredictionRequest
+
+
+RequestModel = _build_request_model()
+
+
+def _payload_to_row(payload) -> dict:
+    """
+    Turn a validated request into a feature row, dropping deprecated fields.
+
+    The request model accepts fields the current champion no longer uses so that
+    clients written against an older schema keep working (see
+    ``api/schema_generator``). Those fields must not travel any further: they
+    would be carried into ``build_features`` and, more importantly, into the
+    redaction-and-storage path, where the whole point of removing geography was
+    that it stops being collected at all.
+
+    Usage is counted per field. Without that, "can we retire the shim?" has no
+    answer except guessing.
+    """
+    row = payload.model_dump()
+
+    for field in _deprecated_fields():
+        if row.pop(field, None) is not None:
+            DEPRECATED_REQUEST_FIELDS_TOTAL.labels(field=field).inc()
+
+    return row
+
+
+def _deprecated_fields() -> tuple[str, ...]:
+    """
+    Deprecated field names for the *current* request model.
+
+    Recomputed rather than cached because ``POST /admin/reload-model`` can swap
+    the champion — and therefore the deprecated set — without a restart.
+    """
+    try:
+        from churn_system.api.schema_generator import deprecated_request_fields
+
+        return tuple(deprecated_request_fields())
+    except Exception:
+        return ()
 
 MAX_BATCH_SIZE = int(os.environ.get("CHURN_MAX_BATCH_SIZE", "100"))
 
-# Batch chunk size for concurrent processing
-BATCH_CHUNK_SIZE = int(os.environ.get("CHURN_BATCH_CHUNK_SIZE", "25"))
+# How many rows go into one inference call. Defaults to the whole batch — i.e. no
+# chunking.
+#
+# Chunking was introduced to "parallelise" batch inference by fanning chunks out
+# through asyncio.gather + asyncio.to_thread. Measured, it does the opposite:
+# scikit-learn's predict_proba holds the GIL for the whole traversal, so extra
+# threads add no parallelism while multiplying the fixed per-call cost
+# (DataFrame construction, schema validation, reindexing) by the number of chunks.
+#
+# Measured on a 100-row batch, one uvicorn worker, 25 reps, trimmed:
+#
+#     chunk= 10 -> 279.0 ms   358 rows/s
+#     chunk= 25 -> 129.1 ms   775 rows/s   <- the previous default
+#     chunk= 50 ->  77.0 ms  1299 rows/s
+#     chunk=100 ->  54.2 ms  1847 rows/s   <- one chunk, the new default
+#
+# Monotonic: every split costs throughput. The knob is kept because it bounds peak
+# memory for a single inference call, which matters if MAX_BATCH_SIZE is raised
+# well beyond 100 — but it is a memory/fairness control, not a throughput one.
+BATCH_CHUNK_SIZE = int(os.environ.get("CHURN_BATCH_CHUNK_SIZE", str(MAX_BATCH_SIZE)))
 
 # Hard ceiling on rows returned by /explain/global regardless of ?limit=
 MAX_GLOBAL_IMPORTANCE_FEATURES = int(
@@ -368,7 +482,29 @@ def _get_model():
     return ModelRegistry.instance().get_model()
 
 
-THRESHOLD = config["inference"]["threshold"]
+def operating_threshold() -> float:
+    """
+    The decision threshold for the model currently in production.
+
+    Read from the model bundle's metadata when present, so a model tuned at 0.28
+    is never served at someone else's 0.5. Falls back to the configured default
+    for bundles trained before threshold selection existed, which keeps older
+    bundles servable rather than failing closed on a missing key.
+    """
+    try:
+        contract = load_model_contract()
+    except Exception:  # bundle unreadable — the caller will fail on the model anyway
+        return float(config["inference"]["threshold"])
+
+    value = contract.get("operating_threshold")
+    if value is None:
+        return float(config["inference"]["threshold"])
+    return float(value)
+
+
+# Backwards-compatible module attribute. Tests and older callers read
+# `api.THRESHOLD`; it now reflects the bundle loaded at import.
+THRESHOLD = operating_threshold()
 
 
 # ---------------------------------------------------------------------------
@@ -422,23 +558,70 @@ async def ready(response: Response):
     }
 
 
-def _readiness_probe() -> None:
-    """Run one prediction through the real pipeline to prove the model works."""
+def _probe_row() -> dict[str, object]:
+    """
+    One realistic feature row for the readiness probe.
+
+    Taken from the training reference when available, so the probe exercises
+    values the fitted encoders actually saw. Filling every field with 0 does not
+    work: the pipeline one-hot encodes string columns, and handing an integer to
+    a fitted OneHotEncoder whose categories are strings makes sklearn call
+    np.isnan() on a mixed-type array, which raises TypeError — so the probe
+    failed 100% of the time regardless of model health.
+    """
     schema = load_feature_schema()
-    probe_row = {feature: _PROBE_VALUES.get(feature, 0) for feature in schema}
-    df = pd.DataFrame([probe_row])
+    reference = Path(CONFIG["paths"]["training_reference"])
+
+    types = load_feature_types()
+
+    if reference.exists():
+        frame = pd.read_csv(reference, nrows=1)
+        if not frame.empty and all(column in frame.columns for column in schema):
+            row = frame[schema].iloc[0].to_dict()
+            # The reference is a CSV, so dtypes are re-inferred on read: a
+            # numeric-looking categorical such as "Zip Code" comes back as int64
+            # while the fitted encoder holds string categories. Restore the types
+            # the bundle declares before scoring.
+            return {
+                feature: (str(value) if types.get(feature) == "str" else value)
+                for feature, value in row.items()
+            }
+
+    # No reference on disk — fall back to type-appropriate neutral values rather
+    # than zeros, so categorical columns stay strings.
+    return {
+        feature: (0 if types.get(feature) in {"int", "float", "bool"} else "unknown")
+        for feature in schema
+    }
+
+
+def _readiness_probe() -> None:
+    """
+    Score one row through the real serving path to prove the model works.
+
+    Deliberately uses build_features + validate_inference_data — the same
+    functions a real request goes through — so the probe cannot pass while the
+    actual prediction path is broken.
+    """
+    frame = pd.DataFrame([_probe_row()])
+    frame = build_features(frame, training=False)
+    validated = validate_inference_data(frame)
     model = _get_model()
-    model.predict_proba(df[schema])
-
-
-# Neutral placeholder values for the readiness probe. Numeric zeros work for
-# scaled columns, and unseen categories are tolerated because the pipeline's
-# OneHotEncoder is configured with handle_unknown="ignore".
-_PROBE_VALUES: dict[str, object] = {}
+    model.predict_proba(validated)
 
 
 @app.get("/metrics")
-async def metrics():
+@limiter.limit("120/minute")
+async def metrics(request: Request):
+    """
+    Prometheus scrape endpoint.
+
+    Refreshes gauges derived from persisted lifecycle state before rendering.
+    Drift, champion version and outbox backlog are produced by the scheduler and
+    worker processes, whose in-memory registries Prometheus never scrapes — so
+    without this the drift alert could not fire at all.
+    """
+    await asyncio.to_thread(refresh_state_metrics)
     body, content_type = render_latest()
     return Response(content=body, media_type=content_type)
 
@@ -477,7 +660,8 @@ def _run_single_inference(row: dict) -> dict:
     df_valid = validate_inference_data(df)
     model = _get_model()
     prob = float(model.predict_proba(df_valid)[:, 1][0])
-    return {"probability": prob, "prediction": int(prob >= THRESHOLD)}
+    threshold = operating_threshold()
+    return {"probability": prob, "prediction": int(prob >= threshold), "threshold": threshold}
 
 
 def _run_batch_inference(rows: list[dict]) -> list[float]:
@@ -516,7 +700,7 @@ async def predict(
     logger.info("Received prediction request | request_id=%s", request_id)
 
     try:
-        row = payload.model_dump()
+        row = _payload_to_row(payload)
         # Offload CPU-bound inference to thread pool
         result = await asyncio.to_thread(_run_single_inference, row)
     except ValueError as e:
@@ -572,7 +756,7 @@ async def predict(
         "request_id": request_id,
         "churn_probability": round(prob, 4),
         "prediction": prediction,
-        "threshold": THRESHOLD,
+        "threshold": result["threshold"],
         "latency_seconds": round(latency, 4),
     }
 
@@ -591,14 +775,16 @@ async def predict_batch(
     Accepts a list of feature rows and returns churn probabilities.
 
     Concurrency strategy:
-    - Splits the batch into chunks of BATCH_CHUNK_SIZE
-    - Each chunk runs inference in a separate thread via asyncio.to_thread()
-    - asyncio.gather() runs all chunks concurrently
-    - Results are reassembled in order
+    - Splits the batch into chunks of BATCH_CHUNK_SIZE (by default: one chunk).
+    - Each chunk runs inference in a worker thread via asyncio.to_thread(), so the
+      event loop stays free to accept other requests.
+    - Results are reassembled in the caller's original order.
 
-    This achieves parallelism: while one chunk is waiting on GIL release
-    during sklearn's C-extension predict, other chunks can proceed with
-    Python-level DataFrame construction.
+    Note that multiple chunks do **not** buy parallelism. sklearn's predict_proba
+    holds the GIL for the traversal, so chunking only multiplies the fixed
+    per-call cost — measured at 5x lower throughput at chunk=10 than unchunked
+    (see BATCH_CHUNK_SIZE). The single to_thread hop is what keeps the event loop
+    responsive; the chunk loop is a memory bound, not a speed-up.
     """
     if len(payloads) > MAX_BATCH_SIZE:
         raise HTTPException(
@@ -614,7 +800,7 @@ async def predict_batch(
     start_time = time.time()
     logger.info("Batch request | batch_id=%s | size=%d", batch_id, len(payloads))
 
-    rows = [p.model_dump() for p in payloads]
+    rows = [_payload_to_row(p) for p in payloads]
 
     # Split into chunks for concurrent processing
     chunks = [rows[i : i + BATCH_CHUNK_SIZE] for i in range(0, len(rows), BATCH_CHUNK_SIZE)]
@@ -655,11 +841,12 @@ async def predict_batch(
     REQUEST_LATENCY_SECONDS.labels(path="/predict/batch", method="POST").observe(latency)
     REQUESTS_TOTAL.labels(path="/predict/batch", method="POST", status="200").inc()
 
+    batch_threshold = operating_threshold()
     results = []
     per_row_latency = latency / max(len(all_probs), 1)
     for i, prob in enumerate(all_probs):
         p = float(prob)
-        prediction = int(p >= THRESHOLD)
+        prediction = int(p >= batch_threshold)
         results.append({
             "index": i,
             "request_id": f"{batch_id}-{i}",
@@ -689,7 +876,7 @@ async def predict_batch(
     return {
         "batch_id": batch_id,
         "count": len(results),
-        "threshold": THRESHOLD,
+        "threshold": batch_threshold,
         "latency_seconds": round(latency, 4),
         "predictions": results,
     }
@@ -794,7 +981,7 @@ async def explain(
     logger.info("Explanation request | request_id=%s", request_id)
 
     try:
-        row = payload.model_dump()
+        row = _payload_to_row(payload)
         result = await asyncio.to_thread(explain_prediction, row)
     except FileNotFoundError as e:
         raise HTTPException(
