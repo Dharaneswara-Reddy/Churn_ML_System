@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: churn-config
+  namespace: churn
+data:
+  CHURN_LOG_FORMAT: "json"
+  CHURN_MLFLOW_ENABLED: "0"
+  # Reload notifications after a promotion. Addressed to the headless Service so
+  # EVERY replica reloads: through the load-balanced Service exactly one replica
+  # would get the notification and the rest would keep serving the old model.
+  CHURN_RELOAD_ENDPOINTS: "http://churn-api-headless:8000/admin/reload-model"
+  CHURN_SCHEDULER_INTERVAL_SECONDS: "3600"
+  # Accept-and-ignore the geographic fields removed from the model, so clients
+  # written against the previous champion keep working. Flip to "1" once
+  # churn_deprecated_request_fields_total shows no caller sends them.
+  CHURN_STRICT_REQUEST_SCHEMA: "0"

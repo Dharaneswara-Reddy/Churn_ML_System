@@ -1,0 +1,42 @@
+# Schema migration. Run to completion before the API and worker start; both
+# assume the tables already match the models. `init_db()` only ever CREATEs
+# missing tables — it can never ALTER an existing one — so skipping this after an
+# upgrade produces "no such column" at runtime, not at startup.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: churn-migrate
+  namespace: churn
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: migrate
+          image: churn-ml-system-training:latest
+          command: ["alembic", "upgrade", "head"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          env:
+            - name: CHURN_EVENT_STORE_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: churn-secrets, key: database-url}}
+            - name: CHURN_ARTIFACT_SIGNING_KEY
+              valueFrom: {secretKeyRef: {name: churn-secrets, key: artifact-signing-key}}
+            - name: CHURN_SUBJECT_KEY_SALT
+              valueFrom: {secretKeyRef: {name: churn-secrets, key: subject-key-salt}}
+          resources:
+            requests: {cpu: "100m", memory: "256Mi"}
+            limits:   {cpu: "500m", memory: "512Mi"}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}

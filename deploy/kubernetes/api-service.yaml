@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: churn-api
+  namespace: churn
+spec:
+  type: ClusterIP
+  selector: {app: churn-api}
+  ports:
+    - {name: http, port: 8000, targetPort: http}
+---
+# Headless Service: resolves to every replica's pod IP rather than one virtual IP.
+# The scheduler posts promotion reloads here so ALL replicas pick up the new
+# champion. Through the load-balanced Service above, exactly one replica would be
+# notified and the others would keep serving the previous model — the kind of
+# split-brain that only shows up as "some requests give different answers".
+apiVersion: v1
+kind: Service
+metadata:
+  name: churn-api-headless
+  namespace: churn
+spec:
+  clusterIP: None
+  selector: {app: churn-api}
+  ports:
+    - {name: http, port: 8000, targetPort: http}

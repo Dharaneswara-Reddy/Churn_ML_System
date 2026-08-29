@@ -1,0 +1,51 @@
+# Outbox drain. Safe to scale: claiming is a committed compare-and-set with a
+# lease, verified against a real PostgreSQL server under 8-way contention.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: churn-worker
+  namespace: churn
+  labels: {app: churn-worker}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: churn-worker}
+  template:
+    metadata:
+      labels: {app: churn-worker}
+    spec:
+      # The worker drains its current batch on SIGTERM; cutting it short would
+      # leave rows claimed until their lease expires.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: worker
+          image: churn-ml-system-training:latest
+          command: ["python", "-m", "churn_system.workers.outbox_consumer"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          envFrom:
+            - configMapRef: {name: churn-config}
+          env:
+            - name: CHURN_EVENT_STORE_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: churn-secrets, key: database-url}}
+            - name: CHURN_SUBJECT_KEY_SALT
+              valueFrom: {secretKeyRef: {name: churn-secrets, key: subject-key-salt}}
+            - name: CHURN_ARTIFACT_SIGNING_KEY
+              valueFrom: {secretKeyRef: {name: churn-secrets, key: artifact-signing-key}}
+          resources:
+            requests: {cpu: "100m", memory: "256Mi"}
+            limits:   {cpu: "1000m", memory: "512Mi"}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: logs, mountPath: /app/logs}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}

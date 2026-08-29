@@ -1,0 +1,12 @@
+# Keeps a node drain from taking the whole API down at once. Without this, a
+# cluster upgrade can evict every replica simultaneously — the outage is caused by
+# the maintenance, not by any fault.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: churn-api
+  namespace: churn
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: churn-api}

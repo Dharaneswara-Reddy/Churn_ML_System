@@ -1,0 +1,26 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: churn-api
+  namespace: churn
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: churn-api}
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    # CPU, because predict_proba is CPU-bound and offloaded to a thread pool —
+    # so saturation shows up as CPU, not as queue depth or memory.
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 70}
+  behavior:
+    scaleUp:
+      # React quickly to load, but not to a single scrape.
+      stabilizationWindowSeconds: 60
+      policies: [{type: Percent, value: 100, periodSeconds: 60}]
+    scaleDown:
+      # Slow on the way down: each new replica pays a cold model load, so
+      # flapping is more expensive here than a few idle pods.
+      stabilizationWindowSeconds: 300
+      policies: [{type: Pods, value: 1, periodSeconds: 120}]

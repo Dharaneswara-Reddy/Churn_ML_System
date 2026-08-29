@@ -1,0 +1,87 @@
+# Exactly one scheduler.
+#
+# It is not stateless: it retrains, rewrites the shared drift baseline at
+# data/training_reference.csv, and promotes into the shared model volume. The
+# PostgreSQL advisory lock makes a second replica *safe* — it stands by and exits —
+# but it does no useful work, so one is the right number.
+#
+# `Recreate` rather than RollingUpdate for the same reason: a rolling update would
+# briefly run two, and the new pod would simply exit as a non-leader, leaving the
+# lifecycle stopped until the next restart.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: churn-scheduler
+  namespace: churn
+  labels: {app: churn-scheduler}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: churn-scheduler}
+  template:
+    metadata:
+      labels: {app: churn-scheduler}
+    spec:
+      terminationGracePeriodSeconds: 120   # let an in-flight retrain finish
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: scheduler
+          image: churn-ml-system-training:latest
+          command: ["python", "-m", "churn_system.lifecycle.scheduler"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          envFrom:
+            - configMapRef: {name: churn-config}
+          env:
+            - name: CHURN_EVENT_STORE_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: churn-secrets, key: database-url}}
+            - name: CHURN_ARTIFACT_SIGNING_KEY
+              valueFrom: {secretKeyRef: {name: churn-secrets, key: artifact-signing-key}}
+            - name: CHURN_SUBJECT_KEY_SALT
+              valueFrom: {secretKeyRef: {name: churn-secrets, key: subject-key-salt}}
+            - name: CHURN_ADMIN_API_KEY
+              valueFrom: {secretKeyRef: {name: churn-secrets, key: admin-api-key}}
+          resources:
+            requests: {cpu: "500m", memory: "1Gi"}
+            limits:   {cpu: "2000m", memory: "3Gi"}
+          volumeMounts:
+            # Read-write here: this is the process that promotes.
+            - {name: models, mountPath: /app/models}
+            - {name: data, mountPath: /app/data}
+            - {name: logs, mountPath: /app/logs}
+      volumes:
+        - name: models
+          persistentVolumeClaim: {claimName: churn-models}
+        - name: data
+          persistentVolumeClaim: {claimName: churn-data}
+        - name: logs
+          emptyDir: {}
+---
+# ReadWriteMany because the scheduler writes while several API replicas read.
+# Without an RWX storage class, bake the model into the image and promote by
+# rolling a new image instead.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: churn-models
+  namespace: churn
+spec:
+  accessModes: [ReadWriteMany]
+  resources:
+    requests: {storage: 5Gi}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: churn-data
+  namespace: churn
+spec:
+  accessModes: [ReadWriteMany]
+  resources:
+    requests: {storage: 10Gi}
