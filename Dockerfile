@@ -34,9 +34,12 @@ USER appuser
 EXPOSE 8000
 
 # Baked into the image so the check travels with it — a compose-only healthcheck is
-# lost under `docker run` and under Kubernetes.
+# lost under `docker run` and under Kubernetes. Targets /ready, not /health:
+# /health is deliberately always-200 while the process lives, so using it would
+# mark an instance with a missing or corrupt model.pkl as healthy and let
+# dependent services start against it.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"
 
 CMD ["uvicorn", "churn_system.api.api:app", \
      "--host", "0.0.0.0", "--port", "8000", \

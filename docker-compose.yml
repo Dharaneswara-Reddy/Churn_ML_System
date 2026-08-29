@@ -6,7 +6,17 @@ x-app-env: &app-env
   CHURN_ALLOW_ANONYMOUS: ${CHURN_ALLOW_ANONYMOUS:-}
   CHURN_LOG_FORMAT: ${CHURN_LOG_FORMAT:-json}
   CHURN_EVENT_STORE_DATABASE_URL: ${CHURN_EVENT_STORE_DATABASE_URL:-sqlite:///./data/churn_events.db}
-  CHURN_SUBJECT_KEY_SALT: ${CHURN_SUBJECT_KEY_SALT:-}
+  # Both of the following fail closed in application code. Neither carries a `:-`
+  # default, because a stack that starts without them is a stack that cannot serve
+  # a prediction — better to refuse at `docker compose up` than to surface it as a
+  # 503 from a container that looks healthy.
+  #
+  # Signature verification runs before the model is unpickled; without the key the
+  # API cannot load a model and promotion cannot write one.
+  CHURN_ARTIFACT_SIGNING_KEY: "${CHURN_ARTIFACT_SIGNING_KEY:?set CHURN_ARTIFACT_SIGNING_KEY in .env — see .env.example for how to generate one}"
+  # Salt for the pseudonymous subject key used by data-subject erasure.
+  CHURN_SUBJECT_KEY_SALT: "${CHURN_SUBJECT_KEY_SALT:?set CHURN_SUBJECT_KEY_SALT in .env — see .env.example for how to generate one}"
+  CHURN_STRICT_REQUEST_SCHEMA: ${CHURN_STRICT_REQUEST_SCHEMA:-}
 
 x-hardening: &hardening
   cap_drop: [ALL]
@@ -39,8 +49,10 @@ services:
         reservations:
           cpus: "0.5"
           memory: 256M
+    # /ready performs a real one-row prediction; worker, scheduler and prometheus
+    # all gate on service_healthy, so this must be the strict probe.
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
       interval: 30s
       timeout: 5s
       retries: 3
