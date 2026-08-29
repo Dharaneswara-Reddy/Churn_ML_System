@@ -25,6 +25,7 @@ diagram above, then dive into whichever package is relevant to your task.
 |----------|---------|----------------|
 | [api.md](api.md) | `churn_system.api` | FastAPI server, error contracts, dynamic schema generation |
 | [serving.md](serving.md) | `churn_system.serving` | Thread-safe ModelRegistry, hot-reloading with ReadWriteLock |
+| [scaling.md](scaling.md) | *(cross-cutting)* | Measured throughput and latency, capacity ceilings, tuning knobs, horizontal scale-out |
 | [workers.md](workers.md) | `churn_system.workers` | Asynchronous Outbox consumer, distributed concurrency safety |
 | [config.md](config.md) | `churn_system.config` | YAML configuration, environment variable overrides |
 | [training.md](training.md) | `churn_system.training` | Full training pipeline, steps, candidate models, evaluation |
