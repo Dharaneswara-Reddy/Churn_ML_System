@@ -70,9 +70,19 @@ It *does* remove the blobs from the canonical repository. It does **not**:
 If the data is genuinely sensitive, treat it as disclosed and act accordingly. A
 history rewrite reduces further exposure; it is not an undo.
 
-**The rewrite has been prepared and verified.** It preserves all 162 commits,
-every author date (so the contribution graph is unchanged), and produces a working
-tree at `HEAD` byte-identical to the current one.
+**The rewrite has been prepared and verified.** It preserves every commit, every
+author date (so the contribution graph is unchanged), and produces a working tree
+at `HEAD` byte-identical to the current one. The whole procedure — backup, rewrite,
+and verification — is scripted in
+[`scripts/remediate_pii_history.sh`](scripts/remediate_pii_history.sh), which stops
+before pushing and prints the publish commands for you to run deliberately:
+
+```bash
+pip install git-filter-repo
+bash scripts/remediate_pii_history.sh <github-owner>
+```
+
+The manual equivalent:
 
 ```bash
 # 1. Work on a fresh clone; never rewrite in place.
