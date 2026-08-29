@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import unicodedata
 from typing import Any
 
 from sqlalchemy import delete, select, update
@@ -33,19 +34,61 @@ def _redact(features: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in features.items() if k not in SENSITIVE_KEYS}
 
 
+SUBJECT_SALT_ENV = "CHURN_SUBJECT_KEY_SALT"
+ALLOW_UNSALTED_ENV = "CHURN_ALLOW_UNSALTED_SUBJECT_KEYS"
+
+
+class SubjectSaltMissingError(RuntimeError):
+    """Raised when pseudonymisation is requested without a configured salt."""
+
+
+def _subject_salt() -> bytes | None:
+    """
+    Return the configured salt, or None when pseudonymisation is explicitly disabled.
+
+    There is deliberately NO default. The previous hardcoded "churn-default-salt"
+    was published in this open-source repository, and customer identifiers are a
+    small enumerable space — so the entire subject_key column was reversible by
+    brute force in seconds, defeating the only privacy property the event store
+    claimed. An unset salt now fails closed unless disabling pseudonymisation is an
+    explicit, deliberate choice.
+    """
+    salt = os.environ.get(SUBJECT_SALT_ENV, "").strip()
+    if salt:
+        return salt.encode("utf-8")
+
+    if os.environ.get(ALLOW_UNSALTED_ENV, "").strip() == "1":
+        return None
+
+    raise SubjectSaltMissingError(
+        f"{SUBJECT_SALT_ENV} is not set. Generate one with "
+        "`python -c \"import secrets; print(secrets.token_hex(32))\"`, or set "
+        f"{ALLOW_UNSALTED_ENV}=1 to run without storing subject keys at all."
+    )
+
+
 def subject_key(subject_id: str | None) -> str | None:
     """
     Derive a stable pseudonymous key for a customer identifier.
 
     Stored instead of the identifier itself, so prediction history can be joined to
-    a customer for labelling or erasure without the event store ever holding
-    directly identifying data. Salted with CHURN_SUBJECT_KEY_SALT to stop the hash
-    from being reversed with a dictionary of plausible ids.
+    a customer for labelling or erasure without the event store holding directly
+    identifying data.
+
+    The identifier is Unicode-normalised (NFC) before hashing. Without this, the
+    same name submitted as NFC at prediction time and NFD at erasure time hashes
+    differently — so a GDPR erasure request silently matched nothing while
+    reporting success.
     """
     if not subject_id or not subject_id.strip():
         return None
-    salt = os.environ.get("CHURN_SUBJECT_KEY_SALT", "churn-default-salt").encode()
-    return hmac.new(salt, subject_id.strip().encode(), hashlib.sha256).hexdigest()[:64]
+
+    salt = _subject_salt()
+    if salt is None:
+        return None  # pseudonymisation explicitly disabled
+
+    normalised = unicodedata.normalize("NFC", subject_id.strip())
+    return hmac.new(salt, normalised.encode("utf-8"), hashlib.sha256).hexdigest()[:64]
 
 
 def store_prediction_event(
