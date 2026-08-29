@@ -31,7 +31,13 @@ from datetime import timedelta
 from sqlalchemy import or_, select, update
 
 from churn_system.config.config import CONFIG
-from churn_system.events.db import OutboxEvent, SessionLocal, init_db, now_utc
+from churn_system.events.db import (
+    OutboxEvent,
+    OutboxStatus,
+    SessionLocal,
+    init_db,
+    now_utc,
+)
 from churn_system.logging.logger import get_logger
 
 logger = get_logger(__name__, CONFIG["logging"].get("worker", "worker.log"))
@@ -85,7 +91,9 @@ def _claim_batch(limit: int) -> list[tuple[int, str, dict]]:
         candidates = session.execute(
             select(OutboxEvent.id)
             .where(
-                OutboxEvent.processed_at.is_(None),
+                OutboxEvent.status.in_(
+                    (OutboxStatus.PENDING.value, OutboxStatus.PROCESSING.value)
+                ),
                 OutboxEvent.attempts < MAX_ATTEMPTS,
                 or_(
                     OutboxEvent.claimed_at.is_(None),
@@ -104,13 +112,19 @@ def _claim_batch(limit: int) -> list[tuple[int, str, dict]]:
             update(OutboxEvent)
             .where(
                 OutboxEvent.id.in_(candidates),
-                OutboxEvent.processed_at.is_(None),
+                OutboxEvent.status.in_(
+                    (OutboxStatus.PENDING.value, OutboxStatus.PROCESSING.value)
+                ),
                 or_(
                     OutboxEvent.claimed_at.is_(None),
                     OutboxEvent.claimed_at < cutoff,
                 ),
             )
-            .values(claimed_at=claimed_at, attempts=OutboxEvent.attempts + 1)
+            .values(
+                claimed_at=claimed_at,
+                attempts=OutboxEvent.attempts + 1,
+                status=OutboxStatus.PROCESSING.value,
+            )
         )
         session.commit()
 
@@ -135,22 +149,52 @@ def _mark_processed(event_ids: list[int]) -> None:
         session.execute(
             update(OutboxEvent)
             .where(OutboxEvent.id.in_(event_ids))
-            .values(processed_at=now_utc())
+            .values(processed_at=now_utc(), status=OutboxStatus.PROCESSED.value)
         )
         session.commit()
 
 
-def _release_claims(event_ids: list[int]) -> None:
-    """Drop the lease on failed rows so they are retried promptly."""
+def _release_claims(event_ids: list[int], error: str | None = None) -> None:
+    """
+    Release failed rows for retry, or dead-letter them once attempts are exhausted.
+
+    An exhausted event previously stayed PENDING with a full attempt count, so it
+    was invisible to reclaiming AND indistinguishable from live work in any status
+    query. It now moves to DEAD_LETTER with the reason recorded.
+    """
     if not event_ids:
         return
+
     with SessionLocal() as session:
+        # Exhausted -> dead letter.
         session.execute(
             update(OutboxEvent)
-            .where(OutboxEvent.id.in_(event_ids))
-            .values(claimed_at=None)
+            .where(
+                OutboxEvent.id.in_(event_ids),
+                OutboxEvent.attempts >= MAX_ATTEMPTS,
+            )
+            .values(
+                claimed_at=None,
+                status=OutboxStatus.DEAD_LETTER.value,
+                last_error=(error or "processing failed")[:512],
+            )
+        )
+        # Still has attempts left -> back to pending for another try.
+        session.execute(
+            update(OutboxEvent)
+            .where(
+                OutboxEvent.id.in_(event_ids),
+                OutboxEvent.attempts < MAX_ATTEMPTS,
+            )
+            .values(
+                claimed_at=None,
+                status=OutboxStatus.PENDING.value,
+                last_error=(error or "processing failed")[:512],
+            )
         )
         session.commit()
+
+    logger.warning("Released %d outbox events after failure", len(event_ids))
 
 
 def _claim_and_process_batch() -> int:
