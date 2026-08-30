@@ -35,6 +35,10 @@ spec:
           command: ["python", "-m", "churn_system.lifecycle.scheduler"]
           securityContext:
             allowPrivilegeEscalation: false
+            # The scheduler writes only to its mounted volumes (models, data,
+            # logs) and to /tmp; nothing needs a writable root filesystem, and
+            # leaving it writable was an oversight rather than a requirement.
+            readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
           envFrom:
             - configMapRef: {name: churn-config}
@@ -55,7 +59,12 @@ spec:
             - {name: models, mountPath: /app/models}
             - {name: data, mountPath: /app/data}
             - {name: logs, mountPath: /app/logs}
+            # Training writes scratch files (joblib, matplotlib), which a
+            # read-only root filesystem would otherwise block.
+            - {name: tmp, mountPath: /tmp}
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: models
           persistentVolumeClaim: {claimName: churn-models}
         - name: data
