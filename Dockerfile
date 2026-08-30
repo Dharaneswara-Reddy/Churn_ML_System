@@ -26,7 +26,11 @@ COPY src ./src
 COPY alembic.ini ./
 COPY alembic ./alembic
 
-RUN pip install --no-cache-dir . \
+# The postgres extra is included because SQLite cannot back more than one
+# process writing concurrently, and this image runs alongside the outbox worker.
+# Without it the container starts and then fails at import with a missing
+# psycopg the moment CHURN_EVENT_STORE_DATABASE_URL names PostgreSQL.
+RUN pip install --no-cache-dir ".[postgres]" \
     && chown -R appuser:appuser /app
 
 USER appuser
