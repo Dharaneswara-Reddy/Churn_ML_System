@@ -163,6 +163,28 @@ resource "aws_iam_role_policy" "app" {
         Resource = ["arn:aws:kms:${var.region}:${data.aws_caller_identity.current.account_id}:alias/aws/ssm"]
       },
       {
+        # GetAuthorizationToken is account-scoped by design: the ECR API grants
+        # the login token globally and does not accept a repository resource.
+        Sid      = "EcrAuth"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = ["*"]
+      },
+      {
+        # Pulling layers IS scoped, to exactly this project's two repositories.
+        Sid    = "EcrPull"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer",
+        ]
+        Resource = [
+          "arn:aws:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/churn-ml-api",
+          "arn:aws:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/churn-ml-training",
+        ]
+      },
+      {
         Sid      = "PublishLogs"
         Effect   = "Allow"
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"]
