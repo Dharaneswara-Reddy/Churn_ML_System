@@ -22,7 +22,11 @@
 services:
   postgres:
     image: postgres:16-alpine
-    profiles: [single]
+    # In both profiles because `migrate` depends on it. A service may only
+    # depend on another that is part of the active profile set, so listing
+    # postgres under `single` alone made `--profile migrate` fail with
+    # "depends on undefined service".
+    profiles: [single, migrate]
     environment:
       POSTGRES_USER: churn
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}"
