@@ -368,6 +368,17 @@ docker compose --profile lifecycle up -d scheduler
 > generate the other two with
 > `python -c "import secrets; print(secrets.token_hex(32))"`.
 
+### Deployed on AWS
+
+A single-node deployment runs on EC2 behind an Elastic IP: the API, the outbox
+worker and PostgreSQL under docker compose, with images pulled from ECR pinned to
+a git commit, secrets read from SSM Parameter Store at boot, and the signed model
+bundle synced from S3. There is no SSH key pair and no inbound port 22 — access is
+via SSM Session Manager. Roughly $18–20/month.
+
+Terraform and the full runbook, including what is deliberately *not* running and
+why, are in [`deploy/`](deploy/).
+
 ### Horizontal scale-out
 
 Two hard prerequisites for more than one API replica: PostgreSQL instead of SQLite
