@@ -22,3 +22,21 @@
 # Revisit when mlflow relaxes its upper bound. Remove BOTH entries then — do not
 # extend the expiry without re-checking.
 CVE-2026-69247 exp:2026-12-31
+
+# AWS-0104 — security group allows egress to any IP address.
+#
+# The deployment is a single instance in a public subnet that installs packages
+# from Ubuntu and Docker mirrors and reaches ECR, S3, SSM and CloudWatch. Those
+# are AWS service ranges plus third-party mirrors whose addresses change, so
+# pinning destination CIDRs would break the node on a routine upstream change
+# rather than protect it.
+#
+# What has been done instead: egress is restricted to 443/tcp, 80/tcp and 53/udp,
+# so there is no arbitrary outbound channel on other ports.
+#
+# Eliminating internet egress means VPC endpoints for S3, ECR, SSM and
+# CloudWatch. The S3 gateway endpoint is free; the interface endpoints are about
+# $7/month each — a large fraction of a ~$18/month deployment. Revisit if this
+# grows past a single node, at which point the endpoint cost is proportionally
+# small.
+AVD-AWS-0104 exp:2026-12-31

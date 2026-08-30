@@ -89,11 +89,41 @@ resource "aws_security_group" "app" {
     cidr_blocks = var.allowed_http_cidrs
   }
 
+  # Egress is restricted to the two ports the node genuinely needs: HTTPS for
+  # apt, ECR, S3 and the SSM agent, and HTTP for a handful of apt mirrors and
+  # redirects. It is not narrowed by destination because those are AWS service
+  # ranges plus the Ubuntu and Docker mirrors, which change; pinning them would
+  # break the instance on a routine upstream change rather than protect it.
+  #
+  # Restricting the *ports* is still worth doing on its own: it stops an
+  # arbitrary outbound channel on some other port, which is what a compromised
+  # process would reach for.
+  #
+  # Removing internet egress entirely means VPC endpoints for S3, ECR, SSM and
+  # CloudWatch. The S3 gateway endpoint is free; the interface endpoints are
+  # roughly $7/month each, which is a large fraction of this deployment's total
+  # cost. See .trivyignore.
   egress {
-    description = "Package installs, image pulls, S3 and SSM"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    description = "HTTPS for ECR, S3, SSM and package repositories"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "HTTP for apt mirrors and redirects"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "DNS"
+    from_port   = 53
+    to_port     = 53
+    protocol    = "udp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
