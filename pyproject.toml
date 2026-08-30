@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "alembic>=1.13.0",
-    "fastapi>=0.128.7",
+    # Floored together: starlette < 1.3.1 carries a HIGH CVE, and only
+    # fastapi >= 0.141 accepts a starlette that new.
+    "fastapi>=0.141.1",
     # Floor raised well above the API we use. The container scan found 18
     # CVEs (7 CRITICAL) in mlflow 3.2.0 — path traversal, arbitrary command
     # execution, credential exfiltration — the last of which is fixed in 3.15.0.
@@ -24,6 +26,16 @@ dependencies = [
     # forwards sensitive headers, and CVE-2026-44432, a decompression-bomb DoS.
     # The resolver otherwise settles on 2.6.3.
     "urllib3>=2.7.0",
+    # Transitive dependencies floored purely to exclude versions with known HIGH
+    # CVEs. None of these is imported directly; without a floor the resolver is
+    # free to pick a vulnerable release, and the lockfile did exactly that.
+    "cryptography>=49.0.0",   # mlflow caps this below 50, so 49.0.0 is the ceiling
+    "gitpython>=3.1.50",
+    "mako>=1.3.12",
+    "pillow>=12.3.0",
+    "pyasn1>=0.6.4",
+    "sqlparse>=0.6.0",
+    "starlette>=1.3.1",
     "scikit-learn==1.7.2",
     "shap>=0.46.0",
     "scipy>=1.14.0",
