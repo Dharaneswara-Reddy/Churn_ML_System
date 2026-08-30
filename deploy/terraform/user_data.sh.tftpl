@@ -65,6 +65,12 @@ fetch() {
     --name "/churn-ml/$ENVIRONMENT/$1" --query 'Parameter.Value' --output text
 }
 
+# The umask is scoped to this subshell on purpose. Leaving it set for the rest of
+# the script made every later mkdir 0700 and every synced file 0600, all owned by
+# root — so the container, which runs as uid 10001, could not read the model it
+# was pointed at. The API came up healthy and /ready failed with a permission
+# error on model.pkl.
+(
 umask 077
 cat > "$APP_DIR/.env" <<ENVEOF
 CHURN_API_KEY=$(fetch api_key)
@@ -79,6 +85,7 @@ AWS_REGION=$REGION
 CHURN_LOG_FORMAT=json
 CHURN_MLFLOW_ENABLED=0
 ENVEOF
+)
 chmod 600 "$APP_DIR/.env"
 
 # --- model bundle -----------------------------------------------------------
@@ -91,7 +98,14 @@ aws s3 sync "s3://$ARTIFACTS_BUCKET/model/production/current/" \
 test -f "$APP_DIR/models/production/current/model.pkl"
 test -f "$APP_DIR/models/production/current/signature.json"
 
+# The bundle is mounted read-only into a container running as uid 10001, which
+# does not exist on the host. Make it world-readable (and directories traversable)
+# rather than guessing at uid mapping. There is nothing secret in the bundle: the
+# signature is what protects it, and it is verified before the pickle is loaded.
+chmod -R a+rX "$APP_DIR/models"
+
 mkdir -p "$APP_DIR/logs" "$APP_DIR/data"
+chmod 755 "$APP_DIR/logs" "$APP_DIR/data"
 
 # --- images -----------------------------------------------------------------
 aws ecr get-login-password --region "$REGION" \
