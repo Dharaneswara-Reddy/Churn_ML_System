@@ -28,6 +28,16 @@ COPY alembic ./alembic
 RUN pip install --no-cache-dir ".[postgres]" \
     && chown -R appuser:appuser /app
 
+# Create the mount points inside the image, owned by the runtime user.
+#
+# Docker copies the image's ownership and contents into a *named* volume the
+# first time it is mounted — but only if the path already exists in the image.
+# Without these, the volume is created root-owned, the unprivileged process
+# cannot open its own log file, and the container crash-loops on
+# PermissionError before it ever binds a port.
+RUN mkdir -p /app/logs /app/data /app/models \
+    && chown -R appuser:appuser /app/logs /app/data /app/models
+
 USER appuser
 
 # Override with CHURN_RAW_DATA_PATH, CHURN_EXPERIMENTS_DIR, etc.
