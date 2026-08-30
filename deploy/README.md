@@ -115,6 +115,23 @@ The S3 buckets and SSM parameters are managed outside Terraform (they hold state
 and secrets that must survive a destroy) and need removing by hand if you want
 them gone.
 
+### Verifying a deploy
+
+```bash
+KEY=$(aws ssm get-parameter --name /churn-ml/prod/api_key --with-decryption \
+        --query Parameter.Value --output text --profile aiops-deploy --region us-east-1)
+bash scripts/smoke_deployment.sh http://<public-ip> "$KEY"
+```
+
+Nine checks, covering the things that actually break: `/ready` runs a real
+prediction, authentication is enforced, old and new clients both work **and
+agree**, a misspelled field is still a 422, and the served threshold comes from
+the bundle rather than a hardcoded 0.5.
+
+The old-versus-new agreement check is the important one. If those two answers ever
+differ, the geographic fields are influencing the model again — which is the exact
+thing removing them was meant to stop.
+
 ### Known limits
 
 * **Single node.** No rolling deploys, and a replacement instance is a brief
