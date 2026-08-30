@@ -1,0 +1,122 @@
+# Single-node AWS deployment overlay.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ec2.yml \
+#       --profile single up -d
+#
+# Differences from the local stack, and why:
+#
+#   * Images are pulled from ECR rather than built. Compiling scikit-learn,
+#     mlflow and shap on a 2 GiB instance is slow and can be killed by the OOM
+#     reaper mid-build; building once on a workstation and pulling a digest is
+#     both faster to boot and reproducible.
+#   * PostgreSQL runs as a container on the same host. SQLite would work for one
+#     replica, but the API and the outbox worker are separate processes writing
+#     concurrently, which is exactly the contention SQLite handles worst.
+#   * The API binds port 80 directly. There is one replica, so an in-stack
+#     load balancer would add a hop and a failure mode without adding anything.
+#
+# The lifecycle scheduler is deliberately NOT started here: it retrains, and the
+# training dataset contains customer PII that has not been placed in this
+# account. Serving and the outbox drain are what this node runs.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    profiles: [single]
+    environment:
+      POSTGRES_USER: churn
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}"
+      POSTGRES_DB: churn_events
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U churn -d churn_events"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_READ_SEARCH, FOWNER, SETGID, SETUID]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  api:
+    build: !reset null
+    image: "${CHURN_API_IMAGE:?set CHURN_API_IMAGE}"
+    profiles: [single]
+    ports: !reset []
+    # Published on 80 so the service is reachable without a port in the URL.
+    # Binding low ports is done by the Docker daemon, not by the container
+    # process, which still runs unprivileged.
+    ports:
+      - "80:8000"
+    environment:
+      CHURN_EVENT_STORE_DATABASE_URL: "postgresql+psycopg://churn:${POSTGRES_PASSWORD}@postgres:5432/churn_events"
+      CHURN_MLFLOW_ENABLED: "0"
+      # One replica behind no proxy, so nothing may set X-Forwarded-For.
+      FORWARDED_ALLOW_IPS: ""
+    volumes:
+      - ./models:/app/models:ro
+      - app-logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: "${AWS_REGION:-us-east-1}"
+        awslogs-group: "${CHURN_LOG_GROUP:-/churn-ml/prod}"
+        awslogs-stream: api
+
+  worker:
+    build: !reset null
+    image: "${CHURN_TRAINING_IMAGE:?set CHURN_TRAINING_IMAGE}"
+    profiles: [single]
+    environment:
+      CHURN_EVENT_STORE_DATABASE_URL: "postgresql+psycopg://churn:${POSTGRES_PASSWORD}@postgres:5432/churn_events"
+      CHURN_MLFLOW_ENABLED: "0"
+    volumes:
+      - app-logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: "${AWS_REGION:-us-east-1}"
+        awslogs-group: "${CHURN_LOG_GROUP:-/churn-ml/prod}"
+        awslogs-stream: worker
+
+  migrate:
+    build: !reset null
+    image: "${CHURN_TRAINING_IMAGE:?set CHURN_TRAINING_IMAGE}"
+    environment:
+      CHURN_EVENT_STORE_DATABASE_URL: "postgresql+psycopg://churn:${POSTGRES_PASSWORD}@postgres:5432/churn_events"
+    volumes: !reset []
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Not part of this deployment.
+  prometheus:
+    profiles: [disabled]
+  scheduler:
+    profiles: [disabled]
+  train:
+    profiles: [disabled]
+
+volumes:
+  postgres-data:
+  app-logs:

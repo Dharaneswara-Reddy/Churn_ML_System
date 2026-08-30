@@ -104,3 +104,14 @@ Thumbs.db
 
 # ---- Docker (not the Dockerfiles, just runtime) -------------
 docker-compose.override.yml
+
+# -------------------- Terraform --------------------
+# State can contain secrets and plan files are environment-specific; the
+# authoritative state lives in the S3 backend.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfvars
+!*.tfvars.example

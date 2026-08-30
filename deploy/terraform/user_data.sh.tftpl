@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+#
+# Bootstrap the churn ML single-node deployment.
+#
+# Everything here is idempotent and logs to /var/log/churn-bootstrap.log, which is
+# the first place to look if the API is not answering. The instance has no inbound
+# SSH; reach it with:
+#     aws ssm start-session --target <instance-id> --profile ${aws_profile}
+set -euxo pipefail
+exec > >(tee -a /var/log/churn-bootstrap.log) 2>&1
+
+echo "=== churn-ml bootstrap starting $(date -Is) ==="
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg git unzip jq
+
+# --- swap -------------------------------------------------------------------
+# 2 GiB of RAM is enough for steady state (the API peaks at 183 MiB with the
+# model loaded), but image extraction and PostgreSQL startup spike. Swap turns a
+# transient spike into slowness instead of an OOM kill.
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# --- docker -----------------------------------------------------------------
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  > /etc/apt/sources.list.d/docker.list
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable --now docker
+
+# --- aws cli ----------------------------------------------------------------
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+unzip -q -o /tmp/awscliv2.zip -d /tmp
+/tmp/aws/install --update
+export PATH=/usr/local/bin:$PATH
+
+REGION="${region}"
+ENVIRONMENT="${environment}"
+ARTIFACTS_BUCKET="${artifacts_bucket}"
+APP_DIR=/opt/churn-ml
+
+# --- source -----------------------------------------------------------------
+if [ ! -d "$APP_DIR/.git" ]; then
+  git clone --depth 1 --branch "${repo_ref}" "${repo_url}" "$APP_DIR"
+else
+  git -C "$APP_DIR" fetch --depth 1 origin "${repo_ref}"
+  git -C "$APP_DIR" reset --hard FETCH_HEAD
+fi
+cd "$APP_DIR"
+
+# --- secrets ----------------------------------------------------------------
+# Read from SSM Parameter Store using the instance role. Nothing secret is baked
+# into the AMI, the user-data, or the git repository.
+fetch() {
+  aws ssm get-parameter --with-decryption --region "$REGION" \
+    --name "/churn-ml/$ENVIRONMENT/$1" --query 'Parameter.Value' --output text
+}
+
+umask 077
+cat > "$APP_DIR/.env" <<ENVEOF
+CHURN_API_KEY=$(fetch api_key)
+CHURN_ADMIN_API_KEY=$(fetch admin_api_key)
+CHURN_ARTIFACT_SIGNING_KEY=$(fetch artifact_signing_key)
+CHURN_SUBJECT_KEY_SALT=$(fetch subject_key_salt)
+POSTGRES_PASSWORD=$(fetch postgres_password)
+CHURN_API_IMAGE=${api_image}
+CHURN_TRAINING_IMAGE=${training_image}
+CHURN_LOG_GROUP=${log_group}
+AWS_REGION=$REGION
+CHURN_LOG_FORMAT=json
+CHURN_MLFLOW_ENABLED=0
+ENVEOF
+chmod 600 "$APP_DIR/.env"
+
+# --- model bundle -----------------------------------------------------------
+# The bundle is HMAC-signed with the same key now in .env, and the serving layer
+# verifies that signature BEFORE unpickling model.pkl. A tampered object in S3
+# therefore fails to load rather than executing.
+mkdir -p "$APP_DIR/models/production/current"
+aws s3 sync "s3://$ARTIFACTS_BUCKET/model/production/current/" \
+  "$APP_DIR/models/production/current/" --region "$REGION" --only-show-errors
+test -f "$APP_DIR/models/production/current/model.pkl"
+test -f "$APP_DIR/models/production/current/signature.json"
+
+mkdir -p "$APP_DIR/logs" "$APP_DIR/data"
+
+# --- images -----------------------------------------------------------------
+aws ecr get-login-password --region "$REGION" \
+  | docker login --username AWS --password-stdin "${ecr_registry}"
+
+COMPOSE="docker compose -f docker-compose.yml -f docker-compose.ec2.yml"
+
+# --- database schema --------------------------------------------------------
+# init_db() only ever CREATEs missing tables; it can never ALTER one. Skipping
+# this leaves the API raising "no such column" at request time rather than
+# failing at startup, so it runs to completion before anything serves.
+$COMPOSE --profile migrate run --rm migrate
+
+# --- start ------------------------------------------------------------------
+$COMPOSE --profile single up -d --pull always
+
+# --- verify -----------------------------------------------------------------
+# /ready runs a real one-row prediction through the full serving path, so this
+# proves the model loaded, its signature verified, and inference works — not
+# merely that a port is open.
+for i in $(seq 1 60); do
+  if curl -fsS http://localhost/ready >/dev/null 2>&1; then
+    echo "=== READY after $${i} attempts ==="
+    curl -fsS http://localhost/ready || true
+    echo
+    echo "=== churn-ml bootstrap complete $(date -Is) ==="
+    exit 0
+  fi
+  sleep 5
+done
+
+echo "!!! /ready did not become healthy; recent container logs follow"
+$COMPOSE --profile single ps || true
+$COMPOSE --profile single logs --tail 100 || true
+exit 1
