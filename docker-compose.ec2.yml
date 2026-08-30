@@ -52,11 +52,14 @@ services:
     build: !reset null
     image: "${CHURN_API_IMAGE:?set CHURN_API_IMAGE}"
     profiles: [single]
-    ports: !reset []
-    # Published on 80 so the service is reachable without a port in the URL.
-    # Binding low ports is done by the Docker daemon, not by the container
-    # process, which still runs unprivileged.
-    ports:
+    # `!override` replaces the base file's port mapping outright. A plain `ports:`
+    # key would be *merged* with the base and publish 8000 as well, and declaring
+    # `!reset` and `ports` separately is two keys with the same name, which the
+    # compose parser rejects.
+    #
+    # Binding port 80 is done by the Docker daemon, not by the container process,
+    # which still runs unprivileged.
+    ports: !override
       - "80:8000"
     environment:
       CHURN_EVENT_STORE_DATABASE_URL: "postgresql+psycopg://churn:${POSTGRES_PASSWORD}@postgres:5432/churn_events"
