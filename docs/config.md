@@ -81,7 +81,7 @@ exports the `CONFIG` dictionary used by every module.
 | `CHURN_EVENT_STORE_DATABASE_URL` | `event_store.database_url` | string | `postgresql://...` |
 | `CHURN_MLFLOW_TRACKING_URI` | `mlflow.tracking_uri` | string | `http://mlflow:5000` |
 | `CHURN_SCHEDULER_INTERVAL_SECONDS` | `scheduler.interval_seconds` | int | `300` |
-| `CHURN_TRAINING_SELECTION_METRIC` | `training.selection_metric` | string | `"roc_auc"` |
+| `CHURN_TRAINING_SELECTION_METRIC` | `training.selection_metric` | string | `"pr_auc"` |
 | `CHURN_MODEL_PROMOTION_METRIC` | `model_promotion.metric` | string | `"pr_auc"` |
 | `CHURN_MODEL_PROMOTION_MIN_IMPROVEMENT` | `model_promotion.min_improvement` | float | `0.02` |
 | `CHURN_API_KEY` | *(checked in api.py)* | string | `"my-secret-key"` |

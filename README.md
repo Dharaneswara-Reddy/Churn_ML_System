@@ -14,12 +14,39 @@
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
 [![Docker](https://img.shields.io/badge/Docker-24.0%2B-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![Ruff](https://img.shields.io/badge/Code%20Style-Ruff-261230?style=for-the-badge&logo=ruff&logoColor=white)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/Tests-313%20Passed-2ea44f?style=for-the-badge&logo=pytest&logoColor=white)](https://docs.pytest.org/)
+[![Tests](https://img.shields.io/badge/Tests-324%20Passed-2ea44f?style=for-the-badge&logo=pytest&logoColor=white)](https://docs.pytest.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 
 [Architecture](#-architecture) • [Quick Start](#-quick-start) • [API Reference](#-api-reference) • [MLOps Lifecycle](#-mlops-lifecycle--drift-detection) • [Observability](#-observability--monitoring) • [Testing](#-testing--quality-assurance)
 
 </div>
+
+---
+
+## 🔗 Try it
+
+The system is deployed and serving. **No installation needed.**
+
+| | Link | What it is |
+|---|---|---|
+| 🖥️ | **http://3.82.134.71/ui** | **Prediction console** — fill in a customer, get a churn probability. Start here. |
+| 📘 | http://3.82.134.71/docs | Interactive OpenAPI reference; send requests from the browser |
+| ❤️ | http://3.82.134.71/health | Liveness — is the process up |
+| ✅ | http://3.82.134.71/ready | Readiness — runs a **real** one-row prediction |
+| 📈 | http://3.82.134.71/metrics | Prometheus metrics |
+| 🕸️ | [docs/graph/](docs/graph/) | Interactive knowledge graph of this codebase |
+
+`/predict` needs an API key sent as `X-API-Key`. The console asks you for it — it
+does not hold one. Retrieve it with:
+
+```bash
+aws ssm get-parameter --name /churn-ml/prod/api_key --with-decryption \
+  --query Parameter.Value --output text --profile aiops-deploy --region us-east-1
+```
+
+> Single `t3.small` in `us-east-1`, ~$18/month, **HTTP only** — the API key travels
+> in clear text. Fine for a demo; put it behind an ALB with an ACM certificate
+> before treating it as anything more. See [deploy/](deploy/).
 
 ---
 
@@ -192,6 +219,21 @@ curl -X POST http://localhost:8000/predict \
   "latency_seconds": 0.0038
 }
 ```
+
+### Browser console
+
+`GET /ui` serves a single-page console: a form built from the live model's schema,
+the returned probability drawn against the operating threshold, and the equivalent
+`curl` command. `GET /` redirects to it.
+
+It is served unauthenticated on purpose — the page discloses nothing and asks the
+visitor for the API key, which the browser then sends on `/predict`. The endpoint
+that actually serves predictions stays behind the same authentication as every
+other client, and tests assert both halves of that.
+
+Because the form is generated from `/openapi.json` rather than hardcoded,
+promoting a model with a different feature set changes the page with no redeploy —
+the same property that makes the request schema self-describing.
 
 ### Endpoints Overview
 
@@ -426,7 +468,7 @@ via environment variables:
 The codebase maintains strict code quality standards, validated with comprehensive unit, integration, and concurrency tests.
 
 ```bash
-# Execute full pytest suite (288 tests; 313 with a live PostgreSQL server)
+# Execute full pytest suite (299 tests; 324 with a live PostgreSQL server)
 .venv/bin/python -m pytest tests/ -v
 
 # With the coverage gate CI enforces

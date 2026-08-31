@@ -8,6 +8,34 @@ and design decision in detail.
 
 ---
 
+## Start here
+
+| I want to… | Go to |
+|---|---|
+| **Send a prediction from a browser** | the live console — see [Live deployment](#live-deployment) |
+| Understand the architecture fast | [graph/](graph/) — interactive knowledge graph, 14x cheaper than reading the source |
+| Know what is measured vs. assumed | [scaling.md](scaling.md) — every number reproducible |
+| Deploy it | [../deploy/README.md](../deploy/README.md) |
+| Understand a single package | the per-package docs in the index below |
+| Report or read about a vulnerability | [../SECURITY.md](../SECURITY.md) |
+
+## Live deployment
+
+| | |
+|---|---|
+| **Console** | http://3.82.134.71/ui |
+| **API docs** | http://3.82.134.71/docs |
+| Health | http://3.82.134.71/health |
+| Readiness | http://3.82.134.71/ready |
+
+The console builds its form from the live model's schema and asks you for the API
+key; it does not hold one. Retrieve the key with:
+
+```bash
+aws ssm get-parameter --name /churn-ml/prod/api_key --with-decryption \
+  --query Parameter.Value --output text --profile aiops-deploy --region us-east-1
+```
+
 ## System Architecture
 
 ![System Architecture](images/system_architecture.png)
@@ -25,6 +53,7 @@ diagram above, then dive into whichever package is relevant to your task.
 |----------|---------|----------------|
 | [api.md](api.md) | `churn_system.api` | FastAPI server, error contracts, dynamic schema generation |
 | [serving.md](serving.md) | `churn_system.serving` | Thread-safe ModelRegistry, hot-reloading with ReadWriteLock |
+| [graph/](graph/) | *(whole repo)* | Interactive knowledge graph — clusters, god nodes, rationale, and an honest audit trail |
 | [scaling.md](scaling.md) | *(cross-cutting)* | Measured throughput and latency, capacity ceilings, tuning knobs, horizontal scale-out |
 | [workers.md](workers.md) | `churn_system.workers` | Asynchronous Outbox consumer, distributed concurrency safety |
 | [config.md](config.md) | `churn_system.config` | YAML configuration, environment variable overrides |

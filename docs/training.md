@@ -159,7 +159,8 @@ All classifiers use `random_state=42` for deterministic results.
 
 ### Constant: `SELECTION_METRIC`
 
-Read from `CONFIG["training"]["selection_metric"]` (default: `"roc_auc"`). This
+Read from `CONFIG["training"]["selection_metric"]` (default: `"pr_auc"` — see
+[settings.yaml](../src/churn_system/config/settings.yaml)). This
 determines which metric is used to select the winning model.
 
 ### Function: `evaluate_candidates(models, X_test, y_test)`
