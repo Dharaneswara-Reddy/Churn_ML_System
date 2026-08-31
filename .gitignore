@@ -120,7 +120,7 @@ tfplan
 # Working files: extraction cache, temp chunks, resolved interpreter path.
 # The published outputs (graph.html, GRAPH_REPORT.md, graph.json) are committed
 # deliberately from docs/ instead.
-graphify-out/.graphify_*
-graphify-out/.chunk*.txt
-graphify-out/.detect_err.txt
-graphify-out/cost.json
+# The whole working directory: extraction cache, manifest, temp chunks, and a
+# duplicate of the outputs. The durable copies live in docs/graph/ and are
+# committed there; a fresh clone rebuilds the cache on its first run.
+graphify-out/
