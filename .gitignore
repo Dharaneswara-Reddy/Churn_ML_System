@@ -115,3 +115,12 @@ docker-compose.override.yml
 tfplan
 *.tfvars
 !*.tfvars.example
+
+# -------------------- graphify --------------------
+# Working files: extraction cache, temp chunks, resolved interpreter path.
+# The published outputs (graph.html, GRAPH_REPORT.md, graph.json) are committed
+# deliberately from docs/ instead.
+graphify-out/.graphify_*
+graphify-out/.chunk*.txt
+graphify-out/.detect_err.txt
+graphify-out/cost.json
