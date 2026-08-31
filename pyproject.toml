@@ -66,7 +66,10 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-churn_system = ["config/settings.yaml"]
+# The console HTML must travel with the package. The container happens to run
+# from the source tree (PYTHONPATH=/app/src) so it would work there regardless,
+# but a plain `pip install churn-ml-system` would otherwise serve a 404 at /ui.
+churn_system = ["config/settings.yaml", "api/static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

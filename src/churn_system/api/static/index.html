@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Churn Prediction Console</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #14171c; --muted: #5d6470;
+    --line: #dfe3e8; --accent: #2f6fed; --accent-ink: #ffffff;
+    --ok: #17794a; --ok-bg: #e6f5ec; --warn: #9a3412; --warn-bg: #fdece3;
+    --err: #b0202a; --err-bg: #fdeaec; --code: #f0f2f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1216; --panel: #171b21; --ink: #e8eaed; --muted: #99a1ad;
+      --line: #2a3038; --accent: #5b8cf7; --accent-ink: #0f1216;
+      --ok: #6ee7a8; --ok-bg: #12301f; --warn: #fbbf7a; --warn-bg: #3a2412;
+      --err: #f79aa3; --err-bg: #3a161b; --code: #1f242b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 20px 64px; }
+  header { margin-bottom: 22px; }
+  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .status { display: inline-flex; align-items: center; gap: 7px; margin-top: 10px;
+            padding: 5px 11px; border-radius: 999px; font-size: 13px;
+            background: var(--code); border: 1px solid var(--line); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.up { background: var(--ok); } .dot.down { background: var(--err); }
+  .grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 12px; padding: 20px; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+              color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input, select {
+    width: 100%; padding: 8px 10px; border-radius: 8px; font-size: 14px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; align-items: center; }
+  button {
+    padding: 10px 18px; border-radius: 8px; border: 1px solid transparent;
+    background: var(--accent); color: var(--accent-ink); font-size: 14px;
+    font-weight: 600; cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--ink); border-color: var(--line); }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  .result { margin-top: 4px; }
+  .verdict { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin: 2px 0 2px; }
+  .verdict.churn { color: var(--err); } .verdict.stay { color: var(--ok); }
+  .bar { height: 9px; border-radius: 999px; background: var(--code);
+         overflow: hidden; margin: 12px 0 6px; position: relative; }
+  .bar > i { display: block; height: 100%; background: var(--accent); }
+  .thresh { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--warn); }
+  .kv { display: flex; justify-content: space-between; gap: 12px;
+        padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .kv:last-child { border-bottom: 0; }
+  .kv span:first-child { color: var(--muted); }
+  .kv span:last-child { font-variant-numeric: tabular-nums; }
+  .note { font-size: 12.5px; color: var(--muted); margin-top: 12px; }
+  .msg { padding: 11px 13px; border-radius: 8px; font-size: 13.5px; margin-top: 12px; }
+  .msg.err { background: var(--err-bg); color: var(--err); }
+  .msg.ok  { background: var(--ok-bg);  color: var(--ok); }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px;
+         font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre { background: var(--code); padding: 12px; border-radius: 8px; overflow-x: auto;
+        font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; }
+  a { color: var(--accent); }
+  .links { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13.5px; margin-top: 14px; }
+  .placeholder { color: var(--muted); font-size: 13.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Churn Prediction Console</h1>
+    <div class="sub">Send a customer record to the model and see the probability, the decision, and the threshold it was compared against.</div>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">checking…</span></div>
+  </header>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Customer</h2>
+      <div id="fields" class="fields"><div class="placeholder">Loading the schema from the live model…</div></div>
+      <div class="row">
+        <button id="submit" disabled>Predict</button>
+        <button id="sample" class="secondary" type="button">Load high-risk sample</button>
+        <button id="sampleLow" class="secondary" type="button">Load low-risk sample</button>
+      </div>
+      <div id="msg"></div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h2>Result</h2>
+        <div id="result" class="result"><div class="placeholder">No prediction yet.</div></div>
+      </div>
+
+      <div class="panel" style="margin-top:20px">
+        <h2>Access</h2>
+        <div>
+          <label for="apikey">API key <code>X-API-Key</code></label>
+          <input id="apikey" type="password" placeholder="required unless anonymous access is enabled" autocomplete="off">
+        </div>
+        <div class="note">Stored only in this browser tab, never sent anywhere but this API.</div>
+        <div class="links">
+          <a href="/docs" target="_blank" rel="noopener">OpenAPI docs</a>
+          <a href="/health" target="_blank" rel="noopener">Health</a>
+          <a href="/ready" target="_blank" rel="noopener">Readiness</a>
+          <a href="/metrics" target="_blank" rel="noopener">Metrics</a>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:20px">
+        <h2>Equivalent request</h2>
+        <pre id="curl">—</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let SCHEMA = null, REQUIRED = [], DEPRECATED = new Set();
+
+// Remember the key for this tab only. Wrapped because storage access throws
+// outright in some privacy modes rather than returning null.
+try { const k = sessionStorage.getItem("churn_api_key"); if (k) $("apikey").value = k; } catch (e) {}
+$("apikey").addEventListener("change", () => {
+  try { sessionStorage.setItem("churn_api_key", $("apikey").value); } catch (e) {}
+});
+
+const HIGH_RISK = {
+  "Gender":"Male","Senior Citizen":"No","Partner":"No","Dependents":"No",
+  "Tenure Months":2,"Phone Service":"Yes","Multiple Lines":"No",
+  "Internet Service":"Fiber optic","Online Security":"No","Online Backup":"No",
+  "Device Protection":"No","Tech Support":"No","Streaming TV":"Yes",
+  "Streaming Movies":"Yes","Contract":"Month-to-month","Paperless Billing":"Yes",
+  "Payment Method":"Electronic check","Monthly Charges":95.7,"Total Charges":191.4
+};
+const LOW_RISK = {
+  "Gender":"Female","Senior Citizen":"No","Partner":"Yes","Dependents":"Yes",
+  "Tenure Months":68,"Phone Service":"Yes","Multiple Lines":"Yes",
+  "Internet Service":"DSL","Online Security":"Yes","Online Backup":"Yes",
+  "Device Protection":"Yes","Tech Support":"Yes","Streaming TV":"No",
+  "Streaming Movies":"No","Contract":"Two year","Paperless Billing":"No",
+  "Payment Method":"Bank transfer (automatic)","Monthly Charges":65.15,"Total Charges":4400.2
+};
+
+// Known category values, so most inputs become a select rather than free text.
+// Anything not listed here falls back to a text box, so the form still works
+// if the model's schema changes.
+const CHOICES = {
+  "Gender":["Male","Female"],
+  "Senior Citizen":["No","Yes"], "Partner":["No","Yes"], "Dependents":["No","Yes"],
+  "Phone Service":["Yes","No"],
+  "Multiple Lines":["No","Yes","No phone service"],
+  "Internet Service":["DSL","Fiber optic","No"],
+  "Online Security":["No","Yes","No internet service"],
+  "Online Backup":["No","Yes","No internet service"],
+  "Device Protection":["No","Yes","No internet service"],
+  "Tech Support":["No","Yes","No internet service"],
+  "Streaming TV":["No","Yes","No internet service"],
+  "Streaming Movies":["No","Yes","No internet service"],
+  "Contract":["Month-to-month","One year","Two year"],
+  "Paperless Billing":["Yes","No"],
+  "Payment Method":["Electronic check","Mailed check","Bank transfer (automatic)","Credit card (automatic)"]
+};
+
+async function boot() {
+  try {
+    const h = await fetch("/health").then(r => r.json());
+    $("dot").className = "dot up";
+    $("statusText").textContent = "model " + (h.model_version || "unknown");
+  } catch (e) {
+    $("dot").className = "dot down";
+    $("statusText").textContent = "unreachable";
+  }
+
+  // The form is generated from the live OpenAPI document rather than hardcoded,
+  // so promoting a model with a different feature set changes this page with no
+  // redeploy — the same property that makes the request schema self-describing.
+  try {
+    const spec = await fetch("/openapi.json").then(r => r.json());
+    SCHEMA = spec.components.schemas.DynamicPredictionRequest;
+    REQUIRED = SCHEMA.required || Object.keys(SCHEMA.properties);
+    for (const [name, p] of Object.entries(SCHEMA.properties)) {
+      if (p.deprecated) DEPRECATED.add(name);
+    }
+    renderFields();
+    $("submit").disabled = false;
+  } catch (e) {
+    $("fields").innerHTML = '<div class="msg err">Could not load the request schema: ' + e.message + '</div>';
+  }
+}
+
+function renderFields() {
+  const box = $("fields");
+  box.innerHTML = "";
+  for (const name of REQUIRED) {
+    const spec = SCHEMA.properties[name] || {};
+    const wrap = document.createElement("div");
+    const lab = document.createElement("label");
+    lab.textContent = name;
+    lab.setAttribute("for", "f_" + name);
+    wrap.appendChild(lab);
+
+    let el;
+    if (CHOICES[name]) {
+      el = document.createElement("select");
+      for (const v of CHOICES[name]) {
+        const o = document.createElement("option");
+        o.value = v; o.textContent = v; el.appendChild(o);
+      }
+    } else {
+      el = document.createElement("input");
+      el.type = (spec.type === "integer" || spec.type === "number") ? "number" : "text";
+      if (spec.type === "number") el.step = "0.01";
+    }
+    el.id = "f_" + name;
+    el.dataset.field = name;
+    el.dataset.kind = spec.type || "string";
+    wrap.appendChild(el);
+    box.appendChild(wrap);
+  }
+  fill(HIGH_RISK);
+}
+
+function fill(values) {
+  for (const [k, v] of Object.entries(values)) {
+    const el = document.querySelector('[data-field="' + CSS.escape(k) + '"]');
+    if (el) el.value = v;
+  }
+  updateCurl();
+}
+
+function collect() {
+  const row = {};
+  document.querySelectorAll("[data-field]").forEach(el => {
+    const kind = el.dataset.kind;
+    let v = el.value;
+    if (kind === "integer") v = parseInt(v, 10);
+    else if (kind === "number") v = parseFloat(v);
+    row[el.dataset.field] = v;
+  });
+  return row;
+}
+
+function updateCurl() {
+  const body = JSON.stringify(collect(), null, 2);
+  $("curl").textContent =
+    "curl -X POST " + location.origin + "/predict \\\n" +
+    "  -H 'Content-Type: application/json' \\\n" +
+    "  -H 'X-API-Key: <your-key>' \\\n" +
+    "  -d '" + body.replace(/\n/g, "\n  ") + "'";
+}
+document.addEventListener("input", (e) => { if (e.target.dataset.field) updateCurl(); });
+
+$("sample").onclick = () => fill(HIGH_RISK);
+$("sampleLow").onclick = () => fill(LOW_RISK);
+
+$("submit").onclick = async () => {
+  $("msg").innerHTML = "";
+  $("submit").disabled = true;
+  $("submit").textContent = "Predicting…";
+  try {
+    const headers = { "Content-Type": "application/json" };
+    const key = $("apikey").value.trim();
+    if (key) headers["X-API-Key"] = key;
+
+    const res = await fetch("/predict", {
+      method: "POST", headers, body: JSON.stringify(collect())
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      const detail = data.detail;
+      let text;
+      if (res.status === 401) {
+        text = "Unauthorised — enter the API key under Access.";
+      } else if (Array.isArray(detail)) {
+        text = detail.map(d => (d.loc || []).slice(-1)[0] + ": " + d.msg).join("; ");
+      } else if (detail && typeof detail === "object") {
+        text = (detail.message || "Request failed") + (detail.detail ? " — " + detail.detail : "");
+      } else {
+        text = detail || ("Request failed with HTTP " + res.status);
+      }
+      $("msg").innerHTML = '<div class="msg err">' + escapeHtml(text) + "</div>";
+      return;
+    }
+    show(data);
+  } catch (e) {
+    $("msg").innerHTML = '<div class="msg err">' + escapeHtml(e.message) + "</div>";
+  } finally {
+    $("submit").disabled = false;
+    $("submit").textContent = "Predict";
+  }
+};
+
+function show(d) {
+  const pct = (d.churn_probability * 100).toFixed(1);
+  const churn = d.prediction === 1;
+  $("result").innerHTML =
+    '<div class="verdict ' + (churn ? "churn" : "stay") + '">' +
+      (churn ? "Likely to churn" : "Likely to stay") + "</div>" +
+    '<div class="bar"><i style="width:' + pct + '%"></i>' +
+      '<span class="thresh" style="left:' + (d.threshold * 100) + '%" title="decision threshold"></span></div>' +
+    '<div class="kv"><span>Churn probability</span><span>' + pct + "%</span></div>" +
+    '<div class="kv"><span>Decision threshold</span><span>' + d.threshold + "</span></div>" +
+    '<div class="kv"><span>Inference latency</span><span>' + (d.latency_seconds * 1000).toFixed(1) + " ms</span></div>" +
+    '<div class="kv"><span>Request id</span><span>' + escapeHtml(d.request_id.slice(0, 12)) + "…</span></div>" +
+    '<div class="note">The orange mark is the operating threshold, read from the deployed model bundle — not a hardcoded 0.5. ' +
+    'It is tuned for recall, so it sits well below the midpoint: missing a churner costs more than a false alarm.</div>';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+boot();
+</script>
+</body>
+</html>

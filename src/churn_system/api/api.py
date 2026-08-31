@@ -31,7 +31,7 @@ from pathlib import Path
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -512,8 +512,44 @@ THRESHOLD = operating_threshold()
 # ---------------------------------------------------------------------------
 # Health / metrics endpoints
 # ---------------------------------------------------------------------------
-@app.get("/")
+# The console is a single self-contained HTML file read from disk at request
+# time. Mounting StaticFiles would work too, but this keeps it to one route with
+# no extra dependency, and re-reading means editing the file does not need a
+# restart during development.
+_UI_PATH = Path(__file__).parent / "static" / "index.html"
+
+
+@app.get("/", include_in_schema=False)
+async def root():
+    """Redirect to the console so the bare host is useful in a browser."""
+    return RedirectResponse(url="/ui", status_code=307)
+
+
+@app.get("/ui", response_class=HTMLResponse, include_in_schema=False)
+async def ui():
+    """
+    Browser console for sending a prediction request.
+
+    Deliberately unauthenticated: the page itself discloses nothing. It builds
+    its form from ``/openapi.json`` and asks the visitor for an API key, which
+    the browser then sends on the ``/predict`` call — so the endpoint that
+    actually serves predictions stays behind the same auth as every other client.
+    """
+    if not _UI_PATH.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=ErrorBody(
+                error_code="ui_unavailable",
+                message="The console asset is not present in this build",
+                detail=None,
+            ).model_dump(),
+        )
+    return HTMLResponse(_UI_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/status", include_in_schema=False)
 async def health_check():
+    """Kept for backwards compatibility: this was the original `/` payload."""
     return {"status": "ok", "message": "Churn model is running"}
 
 

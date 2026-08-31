@@ -6,19 +6,19 @@ Open a private security advisory on the repository rather than a public issue.
 
 ---
 
-## Known exposure: customer geography in git history
+## Resolved: customer geography in git history
 
-**Status: not remediated.** Remediation requires a history rewrite and a
-force-push, which is a decision for the repository owner.
+**Status: remediated on 2026-08-31** by a history rewrite and force-push.
+One follow-up action remains and only the repository owner can perform it —
+see [Remaining action](#remaining-action).
 
-### What is exposed
+### What was exposed
 
 Model artifacts (`models/**/model.pkl`, `mlruns/**`) were committed to this public
-repository before the geographic features were removed from the model. Those
-artifacts are no longer tracked at `HEAD` — they were untracked in commits
-`9a4556d` and `35f03ce` — but **git keeps every version of every file ever
-committed**, so the blobs remain reachable from history and can be recovered by
-anyone who clones the repository.
+repository before the geographic features were removed from the model. They had
+been untracked at `HEAD`, but **git keeps every version of every file ever
+committed**, so 95 blobs (~3.1 MB) remained reachable from history and could be
+recovered by anyone who cloned the repository.
 
 The pickled artifacts contain a fitted `OneHotEncoder` whose `categories_` arrays
 hold, as plaintext strings, the distinct values seen during training:
@@ -33,8 +33,7 @@ This is customer geography at household granularity. It is not aggregated and no
 hashed — the encoder needs the literal values to transform new rows, so it stores
 them verbatim.
 
-An `mlflow.db` SQLite file and several experiment bundles are affected. In total
-12 blobs, ~3.1 MB.
+An `mlflow.db` SQLite file and every experiment bundle were affected.
 
 ### What is already fixed
 
@@ -51,10 +50,53 @@ An `mlflow.db` SQLite file and several experiment bundles are affected. In total
 
 So the exposure is strictly historical. Nothing being written today adds to it.
 
-### Remediating it
+### What was done
 
-Removing the blobs requires rewriting every commit that contains them, which
-changes every commit SHA from the first affected commit onward.
+The history was rewritten with `git-filter-repo` and force-pushed on 2026-08-31.
+Verified before pushing, on a fresh clone:
+
+| Check | Result |
+|---|---|
+| Commits preserved | 188 → 188 |
+| Author dates unchanged | identical (contribution graph intact) |
+| Working tree at `HEAD` | byte-identical to before |
+| Model/mlruns blobs in history | 95 → **0** |
+| Distinctive customer city strings in any blob | **0** |
+| `git fsck` | clean |
+| Pack size | 3.4 MB → 2.6 MB |
+
+`--prune-empty=never` was used deliberately: without it the two
+`chore: untrack ...` commits become empty and are dropped, costing two
+contributions.
+
+A mirror backup of the pre-rewrite remote was taken first.
+
+### Remaining action
+
+**Only the repository owner can do this, and it is not optional if the data
+matters.** GitHub retains unreachable objects and serves them by SHA until it
+garbage-collects. Until that happens, anyone who recorded an old commit SHA can
+still fetch the blob.
+
+[Open a GitHub Support request](https://support.github.com/contact) asking them to
+run a garbage collection on `Churn_ML_System`, and reference the rewrite.
+
+Two other things a rewrite cannot reach:
+
+* **Existing clones and forks.** Outside your control.
+* **Anything that already scraped the repository.**
+
+Treat the data as disclosed. The rewrite reduces further exposure; it is not an
+undo.
+
+Everyone with a working copy must **re-clone**. `git pull` on a rewritten history
+merges the old and new histories and reintroduces the blobs.
+
+### Reproducing the rewrite
+
+The procedure is scripted in
+[`scripts/remediate_pii_history.sh`](scripts/remediate_pii_history.sh). It stops
+before pushing and prints the publish commands.
 
 **Before you start, understand what this does and does not achieve.**
 
